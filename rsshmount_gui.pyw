@@ -402,7 +402,7 @@ def run_visible_winget_install(title: str, package_id: str) -> tuple[int, Path]:
         encoding="utf-8",
     )
     result = subprocess.run(
-        ["cmd.exe", "/k", f'call "{script}"'],
+        ["cmd.exe", "/k", str(script)],
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
         check=False,
     )
