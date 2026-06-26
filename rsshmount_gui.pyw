@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, Button, Canvas, Checkbutton, Entry, Frame, Label, Listbox, Scrollbar, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, Button, Canvas, Checkbutton, Entry, Frame, Label, Scrollbar, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 
 import rsshmount
@@ -250,8 +250,8 @@ def display_mountpoint(server: dict) -> str:
     return mountpoint if mountpoint else "Auto"
 
 
-def capacity_text(server: dict) -> str:
-    if mount_status(server) != "mounted":
+def capacity_text(server: dict, status: str | None = None) -> str:
+    if (status or mount_status(server)) != "mounted":
         return "unknown capacity"
     mountpoint = current_mountpoint(server)
     try:
@@ -561,18 +561,26 @@ class App:
         self.root = root
         self.root.title(APP_TITLE)
         self.root.geometry("760x460")
-        self.servers = load_servers()
-        self.rclone = resolve_rclone_path()
+        self.servers: list[dict] = []
+        self.rclone = ""
 
-        self.status = StringVar(value="Ready")
+        self.status = StringVar(value="Loading configs...")
         self.dep_status = StringVar(value="")
-        self.tray_icon = None
         self.prompted_deps = False
+        self.configs_loaded = False
+        self.status_refreshing = False
+        self.dependency_checking = False
+        self.mount_status_cache: dict[str, str] = {}
+        self.capacity_cache: dict[str, str] = {}
 
         self.build()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.refresh_list()
-        self.root.after(700, self.check_dependencies_async)
+        self.root.after_idle(self.start_background_startup)
+
+    def start_background_startup(self) -> None:
+        self.reload_configs_async()
+        self.check_dependencies_async()
 
     def build(self) -> None:
         top = Frame(self.root, padx=10, pady=8)
@@ -580,7 +588,7 @@ class App:
         Label(top, text="ssh-mountmate").pack(side=LEFT)
         Button(top, text="Settings", command=self.open_settings).pack(side=RIGHT, padx=6)
         Button(top, text="Add config", command=self.add_config).pack(side=RIGHT, padx=6)
-        Button(top, text="Refresh", command=self.refresh_list).pack(side=RIGHT)
+        Button(top, text="Refresh", command=self.reload_configs_async).pack(side=RIGHT)
 
         body = Frame(self.root, padx=10, pady=4)
         body.pack(fill=BOTH, expand=True)
@@ -605,56 +613,81 @@ class App:
         bottom.pack(fill=X)
         Label(bottom, textvariable=self.status).pack(side=LEFT)
 
-    def setup_tray(self) -> None:
-        try:
-            import pystray
-            from PIL import Image, ImageDraw
-        except Exception:
-            self.tray_icon = None
-            return
-
-        image = Image.new("RGB", (64, 64), "#2457d6")
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((14, 14, 50, 50), outline="white", width=4)
-        draw.line((20, 32, 44, 32), fill="white", width=4)
-        menu = pystray.Menu(
-            pystray.MenuItem("Show", lambda _icon, _item: self.root.after(0, self.show_window)),
-            pystray.MenuItem("Exit", lambda _icon, _item: self.root.after(0, self.exit_app)),
-        )
-        self.tray_icon = pystray.Icon("SSHMountMate", image, "SSH MountMate", menu)
-        self.tray_icon.run_detached()
-
-    def hide_to_tray(self) -> None:
-        if self.tray_icon:
-            self.root.withdraw()
-        else:
-            self.root.iconify()
-
-    def show_window(self) -> None:
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
-
     def exit_app(self) -> None:
-        if self.tray_icon:
-            self.tray_icon.stop()
-            self.tray_icon = None
         self.root.destroy()
-
-    def selected(self) -> dict | None:
-        selection = self.listbox.curselection()
-        if not selection:
-            messagebox.showinfo(APP_TITLE, "Select a server first.")
-            return None
-        return self.servers[selection[0]]
 
     def refresh_list(self) -> None:
         for child in self.cards_frame.winfo_children():
             child.destroy()
-        pid_set = running_pid_set() if os.name == "nt" else None
+        if not self.configs_loaded:
+            Label(
+                self.cards_frame,
+                text="Loading configs...",
+                bg="#202020",
+                fg="#bdbdbd",
+                font=("Segoe UI", 11),
+                pady=26,
+            ).pack(fill=X)
+            return
+        if not self.servers:
+            Label(
+                self.cards_frame,
+                text="No configs yet.",
+                bg="#202020",
+                fg="#bdbdbd",
+                font=("Segoe UI", 11),
+                pady=26,
+            ).pack(fill=X)
+            return
         for server in self.servers:
-            self.add_server_card(server, pid_set)
+            server_id = server.get("id", "")
+            status = self.mount_status_cache.get(server_id, "checking")
+            capacity = self.capacity_cache.get(server_id, "")
+            self.add_server_card(server, status, capacity)
         self.bind_cards_mousewheel_recursive(self.cards_frame)
+
+    def reload_configs_async(self) -> None:
+        self.status.set("Loading configs...")
+
+        def worker() -> None:
+            servers = load_servers()
+            self.root.after(0, lambda: self.apply_loaded_configs(servers))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_loaded_configs(self, servers: list[dict]) -> None:
+        self.servers = servers
+        self.configs_loaded = True
+        self.status.set("Ready")
+        self.refresh_list()
+        self.refresh_mount_status_async()
+
+    def refresh_mount_status_async(self) -> None:
+        if self.status_refreshing:
+            return
+        self.status_refreshing = True
+        servers = [dict(server) for server in self.servers]
+
+        def worker() -> None:
+            pid_set = running_pid_set() if os.name == "nt" else None
+            statuses: dict[str, str] = {}
+            capacities: dict[str, str] = {}
+            for server in servers:
+                server_id = server.get("id", "")
+                if not server_id:
+                    continue
+                status = mount_status_with_pids(server, pid_set) if pid_set is not None else mount_status(server)
+                statuses[server_id] = status
+                capacities[server_id] = capacity_text(server, status)
+            self.root.after(0, lambda: self.apply_mount_statuses(statuses, capacities))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_mount_statuses(self, statuses: dict[str, str], capacities: dict[str, str]) -> None:
+        self.status_refreshing = False
+        self.mount_status_cache = statuses
+        self.capacity_cache = capacities
+        self.refresh_list()
 
     def on_cards_mousewheel(self, event) -> None:
         if getattr(event, "num", None) == 4:
@@ -673,8 +706,7 @@ class App:
         for child in widget.winfo_children():
             self.bind_cards_mousewheel_recursive(child)
 
-    def add_server_card(self, server: dict, pid_set: set[int] | None = None) -> None:
-        status = mount_status_with_pids(server, pid_set) if pid_set is not None else mount_status(server)
+    def add_server_card(self, server: dict, status: str = "checking", capacity: str = "") -> None:
         mounted = status == "mounted"
         row_bg = "#2a2a2a" if mounted else "#242424"
         muted = "#7d7d7d"
@@ -691,8 +723,9 @@ class App:
         mid = Frame(row, bg=row_bg)
         mid.pack(side=LEFT, fill=BOTH, expand=True)
         drive = display_mountpoint(server)
+        capacity_label = (capacity or "checking capacity") if mounted else "unknown capacity"
         Label(mid, text=f"{drive}  {server.get('name') or server.get('id')}", bg=row_bg, fg=fg, font=("Segoe UI", 13, "bold")).pack(anchor="w")
-        Label(mid, text=capacity_text(server), bg=row_bg, fg="#c8c8c8", font=("Segoe UI", 10)).pack(anchor="w")
+        Label(mid, text=capacity_label, bg=row_bg, fg="#c8c8c8", font=("Segoe UI", 10)).pack(anchor="w")
         Label(mid, text=f"{server.get('user', '')}@{server.get('host', '')}", bg=row_bg, fg=muted, font=("Segoe UI", 10)).pack(anchor="e", fill=X)
         Label(mid, text=server.get("remote_path") or "~", bg=row_bg, fg=muted, font=("Segoe UI", 10)).pack(anchor="e", fill=X)
 
@@ -711,34 +744,40 @@ class App:
         return button
 
     def check_dependencies_async(self) -> None:
+        if self.dependency_checking:
+            return
+        self.dependency_checking = True
+        self.dep_status.set("Checking dependencies...")
         threading.Thread(target=self.check_dependencies, daemon=True).start()
 
-    def missing_dependencies(self) -> list[str]:
-        missing = []
-        if not resolve_rclone_path():
-            missing.append("rclone")
-        if os.name == "nt" and not winfsp_installed():
-            missing.append("WinFsp")
-        if not ssh_installed():
-            missing.append("OpenSSH")
-        return missing
-
     def check_dependencies(self) -> None:
-        rclone_ok = bool(resolve_rclone_path())
+        rclone_path = resolve_rclone_path()
+        rclone_ok = bool(rclone_path)
         winfsp_ok = winfsp_installed() if os.name == "nt" else True
         ssh_ok = ssh_installed()
+        missing = []
+        if not rclone_ok:
+            missing.append("rclone")
+        if not winfsp_ok:
+            missing.append("WinFsp")
+        if not ssh_ok:
+            missing.append("OpenSSH")
+        self.root.after(0, lambda: self.apply_dependency_result(rclone_path, rclone_ok, winfsp_ok, ssh_ok, missing))
+
+    def apply_dependency_result(self, rclone_path: str, rclone_ok: bool, winfsp_ok: bool, ssh_ok: bool, missing: list[str]) -> None:
+        self.dependency_checking = False
+        self.rclone = rclone_path
         self.dep_status.set(f"rclone: {'ok' if rclone_ok else 'missing'}    WinFsp: {'ok' if winfsp_ok else 'missing'}    ssh: {'ok' if ssh_ok else 'missing'}")
-        missing = self.missing_dependencies()
         if missing and not self.prompted_deps:
             self.prompted_deps = True
-            self.root.after(0, lambda: self.prompt_install_deps(missing))
+            self.prompt_install_deps(missing)
 
     def prompt_install_deps(self, missing: list[str]) -> None:
         if messagebox.askyesno(APP_TITLE, "Missing dependencies: " + ", ".join(missing) + ". Install now?"):
             self.install_deps_async()
 
     def open_settings(self) -> None:
-        self.check_dependencies()
+        self.check_dependencies_async()
         settings = load_settings()
         window = Toplevel(self.root)
         window.title("Settings")
@@ -820,22 +859,30 @@ class App:
 
     def install_deps(self) -> None:
         try:
-            self.status.set("Installing missing dependencies...")
+            self.root.after(0, lambda: self.status.set("Installing missing dependencies..."))
             if not resolve_rclone_path():
                 install_rclone()
             if os.name == "nt" and not winfsp_installed():
                 install_winfsp()
             if os.name == "nt" and not ssh_installed():
                 install_openssh_client()
-            self.rclone = resolve_rclone_path()
-            self.status.set("Dependency check complete.")
-            self.check_dependencies()
+            rclone_path = resolve_rclone_path()
+            self.root.after(0, lambda: self.on_dependency_install_done(rclone_path))
         except Exception as exc:
-            self.status.set("Dependency installation failed.")
-            messagebox.showerror(APP_TITLE, str(exc))
+            message = str(exc)
+            self.root.after(0, lambda: self.on_dependency_install_failed(message))
+
+    def on_dependency_install_done(self, rclone_path: str) -> None:
+        self.rclone = rclone_path
+        self.status.set("Dependency check complete.")
+        self.check_dependencies_async()
+
+    def on_dependency_install_failed(self, message: str) -> None:
+        self.status.set("Dependency installation failed.")
+        messagebox.showerror(APP_TITLE, message)
 
     def add_config(self) -> None:
-        dialog = ServerDialog(self.root, rclone=self.rclone)
+        dialog = ServerDialog(self.root, rclone=self.current_rclone())
         self.root.wait_window(dialog.window)
         if dialog.result:
             self.servers.append(dialog.result)
@@ -846,18 +893,20 @@ class App:
                 except Exception:
                     pass
             self.refresh_list()
+            self.refresh_mount_status_async()
 
     def edit_server(self, server: dict) -> None:
         try:
             index = self.servers.index(server)
         except ValueError:
             return
-        dialog = ServerDialog(self.root, rclone=self.rclone, existing=server)
+        dialog = ServerDialog(self.root, rclone=self.current_rclone(), existing=server)
         self.root.wait_window(dialog.window)
         if dialog.result:
             self.servers[index] = dialog.result
             save_servers(self.servers)
             self.refresh_list()
+            self.refresh_mount_status_async()
 
     def toggle_mount(self, server: dict) -> None:
         if mount_status(server) == "mounted":
@@ -868,11 +917,12 @@ class App:
                 messagebox.showerror(APP_TITLE, str(exc))
         else:
             try:
-                state = mount_server(server, self.rclone)
+                state = mount_server(server, self.current_rclone())
                 self.status.set(f"Mounted {state['remote']} at {state['mountpoint']}")
             except Exception as exc:
                 messagebox.showerror(APP_TITLE, str(exc))
         self.refresh_list()
+        self.refresh_mount_status_async()
 
     def open_folder(self, server: dict) -> None:
         if mount_status(server) != "mounted":
@@ -910,71 +960,12 @@ class App:
         save_servers(self.servers)
         self.status.set(f"Deleted {name}.")
         self.refresh_list()
+        self.refresh_mount_status_async()
 
-    def edit_selected(self) -> None:
-        selection = self.listbox.curselection()
-        if not selection:
-            messagebox.showinfo(APP_TITLE, "Select a server first.")
-            return
-        index = selection[0]
-        current = self.servers[index]
-        dialog = ServerDialog(self.root, rclone=self.rclone, existing=current)
-        self.root.wait_window(dialog.window)
-        if dialog.result:
-            self.servers[index] = dialog.result
-            save_servers(self.servers)
-            self.refresh_list()
-            self.listbox.selection_set(index)
-
-    def delete_selected(self) -> None:
-        selection = self.listbox.curselection()
-        if not selection:
-            return
-        del self.servers[selection[0]]
-        save_servers(self.servers)
-        self.refresh_list()
-
-    def mount_selected(self) -> None:
-        server = self.selected()
-        if not server:
-            return
-        try:
-            state = mount_server(server, self.rclone)
-            self.status.set(f"Mounted {state['remote']} at {state['mountpoint']}")
-            self.refresh_list()
-        except Exception as exc:
-            messagebox.showerror(APP_TITLE, str(exc))
-
-    def unmount_selected(self) -> None:
-        server = self.selected()
-        if not server:
-            return
-        try:
-            unmount_server(server)
-            self.status.set("Unmounted.")
-            self.refresh_list()
-        except Exception as exc:
-            messagebox.showerror(APP_TITLE, str(exc))
-
-    def enable_startup_selected(self) -> None:
-        server = self.selected()
-        if not server:
-            return
-        try:
-            enable_startup(server)
-            self.status.set("Startup mount enabled.")
-        except Exception as exc:
-            messagebox.showerror(APP_TITLE, str(exc))
-
-    def disable_startup_selected(self) -> None:
-        server = self.selected()
-        if not server:
-            return
-        try:
-            disable_startup(server)
-            self.status.set("Startup mount disabled.")
-        except Exception as exc:
-            messagebox.showerror(APP_TITLE, str(exc))
+    def current_rclone(self) -> str:
+        if not self.rclone:
+            self.rclone = resolve_rclone_path()
+        return self.rclone
 
 
 class ServerDialog:
