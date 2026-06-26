@@ -763,11 +763,13 @@ class App:
         size_row.pack(fill=X, pady=3)
         Label(size_row, text="Max cache size", width=16, anchor="w").pack(side=LEFT)
         Entry(size_row, textvariable=cache_max_size).pack(side=LEFT, fill=X, expand=True)
+        Label(size_row, text="default: off", fg="#666666").pack(side=RIGHT, padx=(8, 0))
 
         age_row = Frame(frame)
         age_row.pack(fill=X, pady=3)
         Label(age_row, text="Max cache age", width=16, anchor="w").pack(side=LEFT)
         Entry(age_row, textvariable=cache_max_age).pack(side=LEFT, fill=X, expand=True)
+        Label(age_row, text="default: 1h0m0s", fg="#666666").pack(side=RIGHT, padx=(8, 0))
 
         Checkbutton(frame, text="Mount all configs on Windows login", variable=startup_all).pack(anchor="w", pady=8)
 
