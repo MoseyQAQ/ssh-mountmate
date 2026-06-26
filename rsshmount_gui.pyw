@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, X, Button, Entry, Frame, Label, Listbox, StringVar, Tk, Toplevel, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, RIGHT, X, Y, Button, Canvas, Entry, Frame, Label, Listbox, Scrollbar, StringVar, Tk, Toplevel, filedialog, messagebox
 from tkinter import ttk
 
 import rsshmount
@@ -433,6 +433,30 @@ def headless_mount(server_id: str) -> int:
     return 0
 
 
+class Tooltip:
+    def __init__(self, widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+
+    def show(self, _event=None) -> None:
+        if self.tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 18
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.tip = Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        Label(self.tip, text=self.text, bg="#f7f7d0", fg="#222222", padx=6, pady=3, font=("Segoe UI", 9)).pack()
+
+    def hide(self, _event=None) -> None:
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
 class App:
     def __init__(self, root: Tk):
         self.root = root
@@ -447,7 +471,7 @@ class App:
 
         self.build()
         self.setup_tray()
-        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.refresh_list()
         self.check_dependencies_async()
 
@@ -455,6 +479,8 @@ class App:
         top = Frame(self.root, padx=10, pady=8)
         top.pack(fill=X)
         Label(top, textvariable=self.dep_status).pack(side=LEFT)
+        Button(top, text="Add config", command=self.add_config).pack(side=RIGHT, padx=6)
+        Button(top, text="Refresh", command=self.refresh_list).pack(side=RIGHT)
         Button(top, text="Check", command=self.check_dependencies_async).pack(side=RIGHT)
         Button(top, text="Install deps", command=self.install_deps_async).pack(side=RIGHT, padx=6)
 
@@ -467,8 +493,6 @@ class App:
         bottom = Frame(self.root, padx=10, pady=8)
         bottom.pack(fill=X)
         Label(bottom, textvariable=self.status).pack(side=LEFT)
-        Button(bottom, text="Add config", command=self.add_config).pack(side=RIGHT)
-        Button(bottom, text="Refresh", command=self.refresh_list).pack(side=RIGHT, padx=6)
 
     def setup_tray(self) -> None:
         try:
@@ -544,9 +568,15 @@ class App:
 
         actions = Frame(row, bg=row_bg)
         actions.pack(side=RIGHT)
-        Button(actions, text="Unmount" if mounted else "Mount", width=10, command=lambda s=server: self.toggle_mount(s)).pack(side=LEFT, padx=4)
-        Button(actions, text="Open", width=8, command=lambda s=server: self.open_folder(s)).pack(side=LEFT, padx=4)
-        Button(actions, text="Edit", width=8, command=lambda s=server: self.edit_server(s)).pack(side=LEFT, padx=4)
+        self.icon_button(actions, "■" if mounted else "▶", "Unmount" if mounted else "Mount", lambda s=server: self.toggle_mount(s)).pack(side=LEFT, padx=4)
+        self.icon_button(actions, "📂", "Open mounted folder", lambda s=server: self.open_folder(s)).pack(side=LEFT, padx=4)
+        self.icon_button(actions, "⚙", "Edit mount information", lambda s=server: self.edit_server(s)).pack(side=LEFT, padx=4)
+        self.icon_button(actions, "🗑", "Delete this config", lambda s=server: self.delete_server(s)).pack(side=LEFT, padx=4)
+
+    def icon_button(self, parent, text: str, tooltip: str, command):
+        button = Button(parent, text=text, width=3, height=1, command=command, font=("Segoe UI Emoji", 14))
+        Tooltip(button, tooltip)
+        return button
 
     def check_dependencies_async(self) -> None:
         threading.Thread(target=self.check_dependencies, daemon=True).start()
@@ -625,6 +655,28 @@ class App:
                 subprocess.Popen(["xdg-open", mountpoint])
         except Exception as exc:
             messagebox.showerror(APP_TITLE, str(exc))
+
+    def delete_server(self, server: dict) -> None:
+        status = mount_status(server)
+        name = server.get("name") or server.get("id")
+        if status == "mounted":
+            if not messagebox.askyesno(APP_TITLE, f"{name} is mounted. Unmount and delete this config?"):
+                return
+            try:
+                unmount_server(server)
+            except Exception as exc:
+                messagebox.showerror(APP_TITLE, str(exc))
+                return
+        else:
+            if not messagebox.askyesno(APP_TITLE, f"Delete config {name}?"):
+                return
+        state_file = server_state_file(server)
+        if state_file.exists() and mount_status(server) != "mounted":
+            state_file.unlink(missing_ok=True)
+        self.servers = [item for item in self.servers if item is not server and item.get("id") != server.get("id")]
+        save_servers(self.servers)
+        self.status.set(f"Deleted {name}.")
+        self.refresh_list()
 
     def edit_selected(self) -> None:
         selection = self.listbox.curselection()
@@ -705,11 +757,23 @@ class ServerDialog:
         self.values: dict[str, Entry] = {}
         self.window = Toplevel(root)
         self.window.title("Edit config" if existing else "Add config")
-        self.window.geometry("470x520")
+        self.window.geometry("500x520")
+        self.window.minsize(460, 360)
+        self.window.resizable(True, True)
+        self.canvas = Canvas(self.window, highlightthickness=0)
+        self.scrollbar = Scrollbar(self.window, orient="vertical", command=self.canvas.yview)
+        self.form = Frame(self.canvas)
+        self.form.bind("<Configure>", lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.form, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        self.scrollbar.pack(side=RIGHT, fill=Y)
+        self.canvas.bind("<Enter>", lambda _event: self.canvas.bind_all("<MouseWheel>", self.on_mousewheel))
+        self.canvas.bind("<Leave>", lambda _event: self.canvas.unbind_all("<MouseWheel>"))
         self.build()
 
     def row(self, label: str, key: str, default: str = "", browse=False, secret=False):
-        frame = Frame(self.window, padx=10, pady=4)
+        frame = Frame(self.form, padx=10, pady=4)
         frame.pack(fill=X)
         Label(frame, text=label, width=14, anchor="w").pack(side=LEFT)
         entry = Entry(frame, show="*" if secret else None)
@@ -721,7 +785,7 @@ class ServerDialog:
         return entry
 
     def row_combo(self, label: str, key: str, values: list[str], default: str = ""):
-        frame = Frame(self.window, padx=10, pady=4)
+        frame = Frame(self.form, padx=10, pady=4)
         frame.pack(fill=X)
         Label(frame, text=label, width=14, anchor="w").pack(side=LEFT)
         combo = ttk.Combobox(frame, values=values)
@@ -734,7 +798,7 @@ class ServerDialog:
         return combo
 
     def build(self) -> None:
-        source_frame = Frame(self.window, padx=10, pady=4)
+        source_frame = Frame(self.form, padx=10, pady=4)
         source_frame.pack(fill=X)
         Label(source_frame, text="Source", width=14, anchor="w").pack(side=LEFT)
         ttk.Radiobutton(source_frame, text="SSH config", variable=self.source, value="ssh_config", command=self.on_source_changed).pack(side=LEFT)
@@ -750,7 +814,7 @@ class ServerDialog:
         self.row("User", "user", self.existing.get("user", ""))
         self.row("Port", "port", str(self.existing.get("port") or "22"))
 
-        auth_frame = Frame(self.window, padx=10, pady=4)
+        auth_frame = Frame(self.form, padx=10, pady=4)
         auth_frame.pack(fill=X)
         Label(auth_frame, text="Auth", width=14, anchor="w").pack(side=LEFT)
         ttk.Radiobutton(auth_frame, text="Key", variable=self.auth, value="key").pack(side=LEFT)
@@ -762,7 +826,7 @@ class ServerDialog:
         self.row("Remote path", "remote_path", self.existing.get("remote_path", ""))
         self.row_combo("Mountpoint", "mountpoint", mountpoint_choices(), self.existing.get("mountpoint") or "Auto")
 
-        buttons = Frame(self.window, padx=10, pady=10)
+        buttons = Frame(self.form, padx=10, pady=10)
         buttons.pack(fill=X)
         Button(buttons, text="Save", command=self.save).pack(side=RIGHT)
         Button(buttons, text="Cancel", command=self.window.destroy).pack(side=RIGHT, padx=6)
@@ -770,6 +834,9 @@ class ServerDialog:
         self.update_source_controls()
         if self.source.get() == "ssh_config" and not self.existing and host_default:
             self.apply_ssh_defaults(host_default)
+
+    def on_mousewheel(self, event) -> None:
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def pick_file(self, key: str) -> None:
         path = filedialog.askopenfilename()
