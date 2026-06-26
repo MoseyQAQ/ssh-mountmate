@@ -503,8 +503,21 @@ class App:
         body = Frame(self.root, padx=10, pady=4)
         body.pack(fill=BOTH, expand=True)
 
-        self.cards_frame = Frame(body, bg="#202020")
-        self.cards_frame.pack(fill=BOTH, expand=True)
+        self.cards_canvas = Canvas(body, bg="#202020", highlightthickness=0)
+        self.cards_scrollbar = Scrollbar(body, orient="vertical", command=self.cards_canvas.yview)
+        self.cards_frame = Frame(self.cards_canvas, bg="#202020")
+        self.cards_window = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
+        self.cards_frame.bind("<Configure>", lambda _event: self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all")))
+        self.cards_canvas.bind("<Configure>", lambda event: self.cards_canvas.itemconfigure(self.cards_window, width=event.width))
+        self.cards_canvas.configure(yscrollcommand=self.cards_scrollbar.set)
+        self.cards_canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        self.cards_scrollbar.pack(side=RIGHT, fill=Y)
+        self.cards_canvas.bind("<MouseWheel>", self.on_cards_mousewheel)
+        self.cards_canvas.bind("<Button-4>", self.on_cards_mousewheel)
+        self.cards_canvas.bind("<Button-5>", self.on_cards_mousewheel)
+        self.cards_frame.bind("<MouseWheel>", self.on_cards_mousewheel)
+        self.cards_frame.bind("<Button-4>", self.on_cards_mousewheel)
+        self.cards_frame.bind("<Button-5>", self.on_cards_mousewheel)
 
         bottom = Frame(self.root, padx=10, pady=8)
         bottom.pack(fill=X)
@@ -558,6 +571,24 @@ class App:
             child.destroy()
         for server in self.servers:
             self.add_server_card(server)
+        self.bind_cards_mousewheel_recursive(self.cards_frame)
+
+    def on_cards_mousewheel(self, event) -> None:
+        if getattr(event, "num", None) == 4:
+            direction = -1
+        elif getattr(event, "num", None) == 5:
+            direction = 1
+        else:
+            delta = getattr(event, "delta", 0)
+            direction = -1 if delta > 0 else 1
+        self.cards_canvas.yview_scroll(direction, "units")
+
+    def bind_cards_mousewheel_recursive(self, widget) -> None:
+        widget.bind("<MouseWheel>", self.on_cards_mousewheel)
+        widget.bind("<Button-4>", self.on_cards_mousewheel)
+        widget.bind("<Button-5>", self.on_cards_mousewheel)
+        for child in widget.winfo_children():
+            self.bind_cards_mousewheel_recursive(child)
 
     def add_server_card(self, server: dict) -> None:
         status = mount_status(server)
