@@ -818,17 +818,33 @@ def format_capacity_bytes(size: int) -> str:
     return f"{size} B"
 
 
-def capacity_info(server: dict, status: str | None = None) -> dict:
+def capacity_info(server: dict, rclone: str, status: str | None = None) -> dict:
     if (status or verified_mount_status(server)) != "mounted":
         return {}
-    mountpoint = current_mountpoint(server)
+    state = current_state(server)
+    remote = state.get("remote") or rsshmount.remote_spec(remote_name(server), server.get("remote_path") or "")
     try:
-        usage = shutil.disk_usage(mountpoint)
-    except OSError:
+        result = run([rclone, "--config", str(rsshmount.rclone_config_path()), "about", remote, "--json"], capture=True)
+        data = json.loads(result.stdout or "{}")
+    except Exception:
         return {}
-    used = max(usage.total - usage.free, 0)
-    percent = int(round((used / usage.total) * 100)) if usage.total else 0
-    return {"used": used, "total": usage.total, "percent": max(0, min(percent, 100))}
+    total = data.get("total")
+    used = data.get("used")
+    free = data.get("free")
+    try:
+        total = int(total) if total is not None else None
+        used = int(used) if used is not None else None
+        free = int(free) if free is not None else None
+    except (TypeError, ValueError):
+        return {}
+    if total is None and used is not None and free is not None:
+        total = used + free
+    if used is None and total is not None and free is not None:
+        used = max(total - free, 0)
+    if not total or used is None:
+        return {}
+    percent = int(round((used / total) * 100))
+    return {"used": max(used, 0), "total": total, "percent": max(0, min(percent, 100))}
 
 
 def split_remote_path(remote_path: str) -> tuple[str, str]:
@@ -1350,6 +1366,7 @@ class App:
             return
         self.status_refreshing = True
         servers = [dict(server) for server in self.servers]
+        rclone = self.current_rclone()
 
         def worker() -> None:
             processes = running_rclone_processes() if os.name == "nt" else None
@@ -1361,7 +1378,7 @@ class App:
                     continue
                 status = mount_status_with_processes(server, processes) if processes is not None else mount_status(server)
                 statuses[server_id] = status
-                capacities[server_id] = capacity_info(server, status)
+                capacities[server_id] = capacity_info(server, rclone, status)
             self.root.after(0, lambda: self.apply_mount_statuses(statuses, capacities))
 
         threading.Thread(target=worker, daemon=True).start()
