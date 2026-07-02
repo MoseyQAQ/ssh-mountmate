@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+import shlex
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, RIGHT, X, Y, BooleanVar, Button, Canvas, Checkbutton, Entry, Frame, Label, Scrollbar, StringVar, Text, Tk, Toplevel, filedialog, messagebox
 from tkinter import font as tkfont
@@ -124,6 +125,10 @@ TEXT = {
         "user": "User",
         "port": "Port",
         "auth": "Auth",
+        "connection_method": "Connection",
+        "rclone_native": "rclone native SFTP",
+        "openssh": "OpenSSH",
+        "openssh_help": "OpenSSH uses your system ssh command. Add passphrase-protected keys to ssh-agent first; saved key passphrases are not used in this mode.",
         "key": "Key",
         "password_auth": "Password",
         "key_file": "Key file",
@@ -228,6 +233,10 @@ TEXT = {
         "user": "用户名",
         "port": "端口",
         "auth": "认证",
+        "connection_method": "连接方式",
+        "rclone_native": "rclone 原生 SFTP",
+        "openssh": "OpenSSH",
+        "openssh_help": "OpenSSH 会使用系统 ssh 命令。带短语的密钥请先加入 ssh-agent；此模式不会使用已保存的密钥短语。",
         "key": "密钥",
         "password_auth": "密码",
         "key_file": "密钥文件",
@@ -609,7 +618,7 @@ def same_password_target(existing: dict, result: dict) -> bool:
         return False
     return all(
         str(existing.get(key) or "") == str(result.get(key) or "")
-        for key in ("host_alias", "host", "user", "port", "auth")
+        for key in ("host_alias", "host", "user", "port", "auth", "connection_method")
     )
 
 
@@ -617,7 +626,12 @@ def same_key_passphrase_target(existing: dict, result: dict) -> bool:
     return (
         str(existing.get("auth") or "") == str(result.get("auth") or "")
         and str(existing.get("key_file") or "") == str(result.get("key_file") or "")
+        and connection_method_value(existing) == connection_method_value(result)
     )
+
+
+def connection_method_value(server: dict) -> str:
+    return str(server.get("connection_method") or "native")
 
 
 def server_label(server: dict) -> str:
@@ -959,6 +973,7 @@ def server_from_ssh_config_host(host_alias: str, config_path: str | Path | None 
         "port": defaults.get("port") or "22",
         "auth": "key",
         "key_file": defaults.get("key_file", ""),
+        "connection_method": "native",
         "remote_path": "",
         "mountpoint": "",
         "cache_mode": "",
@@ -1125,6 +1140,25 @@ def obscure_password(rclone: str, password: str) -> str:
     return result.stdout.strip()
 
 
+def ssh_command_for_server(server: dict) -> str:
+    parts = ["ssh", "-o", "BatchMode=yes"]
+    if server.get("source") == "ssh_config" and server.get("host_alias"):
+        parts.append(str(server["host_alias"]))
+        return " ".join(shlex.quote(part) for part in parts)
+
+    port = str(server.get("port") or "22")
+    user = str(server.get("user") or "")
+    key_file = str(server.get("key_file") or "")
+    if user:
+        parts.extend(["-l", user])
+    if port:
+        parts.extend(["-p", port])
+    if key_file:
+        parts.extend(["-i", key_file, "-o", "IdentitiesOnly=yes"])
+    parts.append(str(server.get("host") or ""))
+    return " ".join(shlex.quote(part) for part in parts)
+
+
 def write_manual_remote(server: dict, rclone: str) -> None:
     import configparser
 
@@ -1139,31 +1173,37 @@ def write_manual_remote(server: dict, rclone: str) -> None:
         parser.remove_section(remote)
     parser.add_section(remote)
     parser.set(remote, "type", "sftp")
-    parser.set(remote, "host", server["host"])
-    parser.set(remote, "user", server["user"])
-    parser.set(remote, "port", str(server.get("port") or "22"))
     parser.set(remote, "shell_type", "unix")
     parser.set(remote, "disable_hashcheck", "true")
 
-    if server.get("auth") == "password":
-        parser.set(remote, "pass", server["password_obscured"])
-    elif server.get("key_file"):
-        parser.set(remote, "key_file", server["key_file"])
-        if server.get("key_pass_obscured"):
-            parser.set(remote, "key_file_pass", server["key_pass_obscured"])
+    if connection_method_value(server) == "openssh":
+        parser.set(remote, "ssh", ssh_command_for_server(server))
     else:
-        parser.set(remote, "key_use_agent", "true")
+        parser.set(remote, "host", server["host"])
+        parser.set(remote, "user", server["user"])
+        parser.set(remote, "port", str(server.get("port") or "22"))
 
-    known_hosts = rsshmount.update_app_known_hosts(server["host"], server.get("port") or "22") or rsshmount.default_known_hosts_file()
-    if known_hosts.exists():
-        parser.set(remote, "known_hosts_file", str(known_hosts))
+        if server.get("auth") == "password":
+            parser.set(remote, "pass", server["password_obscured"])
+        elif server.get("key_file"):
+            parser.set(remote, "key_file", server["key_file"])
+            if server.get("key_pass_obscured"):
+                parser.set(remote, "key_file_pass", server["key_pass_obscured"])
+        else:
+            parser.set(remote, "key_use_agent", "true")
+
+        known_hosts = rsshmount.update_app_known_hosts(server["host"], server.get("port") or "22") or rsshmount.default_known_hosts_file()
+        if known_hosts.exists():
+            parser.set(remote, "known_hosts_file", str(known_hosts))
 
     with conf_path.open("w", encoding="utf-8") as fh:
         parser.write(fh)
 
 
 def ensure_remote(server: dict, rclone: str) -> None:
-    if server["mode"] == "ssh_config":
+    if connection_method_value(server) == "openssh":
+        write_manual_remote(server, rclone)
+    elif server["mode"] == "ssh_config":
         rsshmount.ensure_rclone_remote(server["host_alias"], None, "auto")
     else:
         write_manual_remote(server, rclone)
@@ -2070,6 +2110,7 @@ class ServerDialog:
             existing_source = "ssh_config"
         self.source = StringVar(value=existing_source or "ssh_config")
         self.auth = StringVar(value=self.existing.get("auth", "key"))
+        self.connection_method = StringVar(value=connection_method_value(self.existing))
         self.values: dict[str, Entry] = {}
         self.batch_config_path = StringVar(value=str(Path.home() / ".ssh" / "config"))
         self.window = Toplevel(root)
@@ -2168,11 +2209,22 @@ class ServerDialog:
         auth_frame = Frame(self.single_frame, padx=10, pady=4)
         auth_frame.pack(fill=X)
         Label(auth_frame, text=self.t("auth"), width=14, anchor="w").pack(side=LEFT)
-        ttk.Radiobutton(auth_frame, text=self.t("key"), variable=self.auth, value="key").pack(side=LEFT)
-        ttk.Radiobutton(auth_frame, text=self.t("password_auth"), variable=self.auth, value="password").pack(side=LEFT)
+        self.auth_buttons = [
+            ttk.Radiobutton(auth_frame, text=self.t("key"), variable=self.auth, value="key"),
+            ttk.Radiobutton(auth_frame, text=self.t("password_auth"), variable=self.auth, value="password"),
+        ]
+        for button in self.auth_buttons:
+            button.pack(side=LEFT)
         self.row(self.t("key_file"), "key_file", self.existing.get("key_file", ""), browse=True, parent=self.single_frame)
         self.row(self.t("key_passphrase"), "key_passphrase", secret=True, parent=self.single_frame)
         self.row(self.t("password"), "password", secret=True, parent=self.single_frame)
+
+        method_frame = Frame(self.single_frame, padx=10, pady=4)
+        method_frame.pack(fill=X)
+        Label(method_frame, text=self.t("connection_method"), width=14, anchor="w").pack(side=LEFT)
+        ttk.Radiobutton(method_frame, text=self.t("rclone_native"), variable=self.connection_method, value="native", command=self.update_connection_method_controls).pack(side=LEFT)
+        ttk.Radiobutton(method_frame, text=self.t("openssh"), variable=self.connection_method, value="openssh", command=self.update_connection_method_controls).pack(side=LEFT)
+        self.connection_help = Label(self.single_frame, text=self.t("openssh_help"), fg="#666666", wraplength=520, justify=LEFT)
 
         self.row_remote_path(self.existing.get("remote_path", ""), parent=self.single_frame)
         self.row_combo(self.t("mountpoint"), "mountpoint", mountpoint_choices(), self.existing.get("mountpoint") or "Auto", parent=self.single_frame)
@@ -2186,6 +2238,7 @@ class ServerDialog:
         Button(self.buttons_frame, text=self.t("cancel"), command=self.window.destroy).pack(side=RIGHT, padx=6)
 
         self.update_source_controls()
+        self.update_connection_method_controls()
         if self.source.get() == "ssh_config" and not self.existing and host_default:
             self.apply_ssh_defaults(host_default)
         self.bind_mousewheel_recursive(self.form)
@@ -2304,6 +2357,32 @@ class ServerDialog:
             self.save_button.configure(text=self.t("save"))
         state = "readonly" if self.source.get() == "ssh_config" else "disabled"
         self.host_combo.configure(state=state)
+        self.update_connection_method_controls()
+
+    def update_connection_method_controls(self) -> None:
+        if not hasattr(self, "connection_help"):
+            return
+        openssh = self.connection_method.get() == "openssh" and self.source.get() != "ssh_config_batch"
+        if openssh:
+            self.auth.set("key")
+            self.connection_help.pack(fill=X, padx=24, pady=(0, 4))
+        else:
+            self.connection_help.pack_forget()
+
+        secret_state = "disabled" if openssh else "normal"
+        for key in ("key_passphrase", "password"):
+            widget = self.values.get(key)
+            if widget:
+                try:
+                    widget.configure(state=secret_state)
+                except Exception:
+                    pass
+        auth_state = "disabled" if openssh else "normal"
+        for button in getattr(self, "auth_buttons", []):
+            try:
+                button.configure(state=auth_state)
+            except Exception:
+                pass
 
     def on_source_changed(self) -> None:
         self.update_source_controls()
@@ -2367,12 +2446,15 @@ class ServerDialog:
             "port": self.get("port") or "22",
             "auth": self.auth.get(),
             "key_file": self.get("key_file"),
+            "connection_method": self.connection_method.get() or "native",
             "remote_path": compose_remote_path(self.get("remote_base"), self.get("remote_suffix")),
             "mountpoint": mountpoint,
             "cache_mode": self.existing.get("cache_mode", ""),
         }
 
-        if self.auth.get() == "password":
+        if self.connection_method.get() == "openssh":
+            result["auth"] = "key"
+        elif self.auth.get() == "password":
             password = self.get("password")
             if not password and self.existing.get("password_obscured") and same_password_target(self.existing, result):
                 result["password_obscured"] = self.existing["password_obscured"]
