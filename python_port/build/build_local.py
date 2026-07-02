@@ -9,6 +9,8 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     dist = root / "dist"
     work = root / "build" / "pyinstaller-work"
+    data_separator = ";" if sys.platform.startswith("win") else ":"
+    assets = root / "src" / "ssh_mountmate" / "assets"
     cmd = [
         sys.executable,
         "-m",
@@ -23,7 +25,9 @@ def main() -> int:
         str(work),
         "--specpath",
         str(root / "build"),
-        str(root / "src" / "ssh_mountmate" / "__main__.py"),
+        "--add-data",
+        f"{assets}{data_separator}ssh_mountmate/assets",
+        str(root / "launcher.py"),
     ]
     return subprocess.call(cmd)
 
