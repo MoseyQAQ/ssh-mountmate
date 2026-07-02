@@ -1293,6 +1293,8 @@ class App:
         self.mount_status_cache: dict[str, str] = {}
         self.capacity_cache: dict[str, dict] = {}
         self.refresh_generation = 0
+        self.card_action_columns = 4
+        self.resize_refresh_pending = False
 
         self.build()
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -1336,7 +1338,7 @@ class App:
         self.cards_frame = Frame(self.cards_canvas, bg="#202020")
         self.cards_window = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
         self.cards_frame.bind("<Configure>", lambda _event: self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all")))
-        self.cards_canvas.bind("<Configure>", lambda event: self.cards_canvas.itemconfigure(self.cards_window, width=event.width))
+        self.cards_canvas.bind("<Configure>", self.on_cards_canvas_configure)
         self.cards_canvas.configure(yscrollcommand=self.cards_scrollbar.set)
         self.cards_canvas.pack(side=LEFT, fill=BOTH, expand=True)
         self.cards_scrollbar.pack(side=RIGHT, fill=Y)
@@ -1460,6 +1462,28 @@ class App:
             direction = -1 if delta > 0 else 1
         self.cards_canvas.yview_scroll(direction, "units")
 
+    def action_button_columns_for_width(self, width: int | None = None) -> int:
+        width = width or self.cards_canvas.winfo_width() or self.root.winfo_width()
+        if width < 430:
+            return 1
+        if width < 600:
+            return 2
+        return 4
+
+    def on_cards_canvas_configure(self, event) -> None:
+        self.cards_canvas.itemconfigure(self.cards_window, width=event.width)
+        columns = self.action_button_columns_for_width(event.width)
+        if columns == self.card_action_columns:
+            return
+        self.card_action_columns = columns
+        if not self.resize_refresh_pending:
+            self.resize_refresh_pending = True
+            self.root.after(80, self.refresh_list_after_resize)
+
+    def refresh_list_after_resize(self) -> None:
+        self.resize_refresh_pending = False
+        self.refresh_list()
+
     def bind_cards_mousewheel_recursive(self, widget) -> None:
         widget.bind("<MouseWheel>", self.on_cards_mousewheel)
         widget.bind("<Button-4>", self.on_cards_mousewheel)
@@ -1481,6 +1505,9 @@ class App:
         Label(left, text="🛡", bg=row_bg, fg=fg, font=("Segoe UI Emoji", 28)).pack(anchor="w")
         Label(left, text=self.status_text(status), bg=row_bg, fg=muted, font=(FONT_FAMILY_ZH if self.lang == "zh" else FONT_FAMILY_EN, 9)).pack(anchor="w", pady=(6, 0))
 
+        actions = Frame(row, bg=row_bg)
+        actions.pack(side=RIGHT, anchor="e")
+
         mid = Frame(row, bg=row_bg)
         mid.pack(side=LEFT, fill=BOTH, expand=True)
         drive = display_mountpoint_for_status(server, status)
@@ -1495,22 +1522,22 @@ class App:
         else:
             capacity_label = self.t("checking_capacity") if mounted else self.t("unknown_capacity")
         font_family = FONT_FAMILY_ZH if self.lang == "zh" else FONT_FAMILY_EN
-        Label(mid, text=f"{drive}  {server.get('name') or server.get('id')}", bg=row_bg, fg=fg, font=(font_family, 13, "bold")).pack(anchor="w")
+        text_wrap = max(140, self.cards_canvas.winfo_width() - 300)
+        Label(mid, text=f"{drive}  {server.get('name') or server.get('id')}", bg=row_bg, fg=fg, font=(font_family, 13, "bold"), wraplength=text_wrap, justify=LEFT).pack(anchor="w")
         Label(mid, text=capacity_label, bg=row_bg, fg="#c8c8c8", font=(font_family, 10)).pack(anchor="w")
         self.capacity_bar(mid, int(capacity.get("percent", 0)) if mounted and capacity else None, row_bg, muted).pack(fill=X, pady=(5, 4))
-        Label(mid, text=f"{server.get('user', '')}@{server.get('host', '')}", bg=row_bg, fg=muted, font=(font_family, 10)).pack(anchor="e", fill=X)
-        Label(mid, text=server.get("remote_path") or "~", bg=row_bg, fg=muted, font=(font_family, 10)).pack(anchor="e", fill=X)
+        Label(mid, text=f"{server.get('user', '')}@{server.get('host', '')}", bg=row_bg, fg=muted, font=(font_family, 10), wraplength=text_wrap, justify=RIGHT).pack(anchor="e", fill=X)
+        Label(mid, text=server.get("remote_path") or "~", bg=row_bg, fg=muted, font=(font_family, 10), wraplength=text_wrap, justify=RIGHT).pack(anchor="e", fill=X)
 
-        actions = Frame(row, bg=row_bg)
-        actions.pack(side=RIGHT)
         buttons = [
             ("■" if mounted else "▶", self.t("unmount") if mounted else self.t("mount"), lambda s=server: self.toggle_mount(s), True),
             ("📂", self.t("open_folder"), lambda s=server: self.open_folder(s), mounted),
             ("✎", self.t("edit_mounted_disabled") if mounted else self.t("edit_mount"), lambda s=server: self.edit_server(s), not mounted),
             ("🗑", self.t("delete_config"), lambda s=server: self.delete_server(s), not mounted),
         ]
+        columns = self.card_action_columns
         for index, (text, tooltip, command, enabled) in enumerate(buttons):
-            self.icon_button(actions, text, tooltip, command, enabled=enabled).grid(row=0, column=index, padx=2, pady=2)
+            self.icon_button(actions, text, tooltip, command, enabled=enabled).grid(row=index // columns, column=index % columns, padx=2, pady=2)
 
     def icon_button(self, parent, text: str, tooltip: str, command, *, enabled: bool = True):
         button = Button(parent, text=text, width=3, height=1, command=command, font=("Segoe UI Emoji", 14))
