@@ -11,6 +11,7 @@ env/
 bin/
 dist/
 release/
+build/generated-assets/
 build/pyinstaller-work/
 build/*.spec
 

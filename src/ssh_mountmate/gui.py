@@ -368,7 +368,7 @@ def language_setting_from_choice(value: str) -> str:
 
 def bundled_dir() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
     return Path(__file__).resolve().parent
 
 

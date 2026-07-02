@@ -11,7 +11,7 @@ dependencies = []
 license = { file = "LICENSE" }
 
 [project.optional-dependencies]
-build = ["pyinstaller>=6"]
+build = ["pyinstaller>=6", "fonttools>=4.50"]
 
 [project.scripts]
 ssh-mountmate = "ssh_mountmate.__main__:main"
