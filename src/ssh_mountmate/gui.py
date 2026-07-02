@@ -37,6 +37,7 @@ FONT_FAMILY_ZH = "Noto Sans CJK SC"
 RCLONE_CONFIG_LOCK = threading.RLock()
 MOUNT_ALL_WORKERS = 3
 UNMOUNT_ALL_WORKERS = 5
+HOME_MOUNTPOINT_VALUE = "__home_mnt__"
 TEXT = {
     "en": {
         "ready": "Ready",
@@ -149,6 +150,7 @@ TEXT = {
         "password": "Password",
         "remote_path": "Remote path",
         "mountpoint": "Mountpoint",
+        "home_mountpoint": "User folder (~/mnt/name)",
         "save": "Save",
         "cancel": "Cancel",
         "name_required": "Name is required.",
@@ -266,6 +268,7 @@ TEXT = {
         "password": "密码",
         "remote_path": "远程路径",
         "mountpoint": "挂载点",
+        "home_mountpoint": "用户文件夹 (~/mnt/名称)",
         "save": "保存",
         "cancel": "取消",
         "name_required": "名称必填。",
@@ -664,7 +667,7 @@ def connection_method_value(server: dict) -> str:
 def server_label(server: dict) -> str:
     name = server.get("name") or server.get("id")
     mode = server.get("source") or server.get("mode", "")
-    mountpoint = server.get("mountpoint") or "Auto"
+    mountpoint = current_mountpoint(server) if server.get("mountpoint") == HOME_MOUNTPOINT_VALUE else server.get("mountpoint") or "Auto"
     status = mount_status(server)
     return f"{name}  [{mode}]  {mountpoint}  - {status}"
 
@@ -802,9 +805,40 @@ def mountpoint_ready(mountpoint: str) -> bool:
     try:
         if os.name == "nt" and len(mountpoint) in (2, 3) and mountpoint[1] == ":":
             return rsshmount.windows_drive_in_use(mountpoint)
-        return Path(mountpoint).exists()
+        if os.name == "nt":
+            return Path(mountpoint).exists()
+        return Path(mountpoint).is_mount()
     except OSError:
         return False
+
+
+def resolve_mountpoint(server: dict) -> str:
+    configured_mountpoint = server.get("mountpoint") or ""
+    if configured_mountpoint == HOME_MOUNTPOINT_VALUE:
+        return str(rsshmount.home_mountpoint(remote_name(server)))
+    if not configured_mountpoint or configured_mountpoint.lower() == "auto":
+        return str(rsshmount.default_mountpoint(remote_name(server)))
+    return configured_mountpoint
+
+
+def prepare_gui_mountpoint(mountpoint: str) -> None:
+    path = Path(mountpoint).expanduser()
+    value = str(path)
+    if os.name == "nt":
+        if value == "*" or rsshmount.is_windows_drive(value):
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            try:
+                is_empty_dir = path.is_dir() and not any(path.iterdir())
+            except OSError:
+                is_empty_dir = False
+            if is_empty_dir:
+                path.rmdir()
+            else:
+                raise RuntimeError(f"Windows directory mountpoint must not already exist: {path}")
+        return
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def wait_for_mount_ready(
@@ -871,6 +905,8 @@ def current_mountpoint(server: dict) -> str:
         except Exception:
             pass
     configured = server.get("mountpoint") or ""
+    if configured == HOME_MOUNTPOINT_VALUE:
+        return str(rsshmount.home_mountpoint(remote_name(server)))
     if configured and configured.lower() != "auto":
         return configured
     return str(rsshmount.default_mountpoint(remote_name(server)))
@@ -902,6 +938,8 @@ def display_mountpoint_for_status(server: dict, status: str) -> str:
     configured = server.get("mountpoint") or ""
     if status == "mounted":
         return display_mountpoint(server)
+    if configured == HOME_MOUNTPOINT_VALUE:
+        return str(rsshmount.home_mountpoint(remote_name(server)))
     if configured and configured.lower() != "auto":
         return configured
     return "Auto"
@@ -960,15 +998,34 @@ def compose_remote_path(base: str, suffix: str) -> str:
     return suffix
 
 
-def mountpoint_choices() -> list[str]:
+def home_mountpoint_label(lang: str) -> str:
+    return tr_lang(lang, "home_mountpoint")
+
+
+def mountpoint_choices(lang: str = "en") -> list[str]:
     if os.name != "nt":
         return ["Auto"]
-    choices = ["Auto"]
+    choices = ["Auto", home_mountpoint_label(lang)]
     for letter in "ZYXWVUTSRQPONMLKJIHGFED":
         drive = f"{letter}:"
         if not rsshmount.windows_drive_in_use(drive):
             choices.append(drive)
     return choices
+
+
+def mountpoint_value_to_choice(value: str, lang: str) -> str:
+    if value == HOME_MOUNTPOINT_VALUE:
+        return home_mountpoint_label(lang)
+    return value or "Auto"
+
+
+def mountpoint_choice_to_value(value: str, lang: str) -> str:
+    text = (value or "").strip()
+    if not text or text.lower() == "auto":
+        return ""
+    if text == HOME_MOUNTPOINT_VALUE or text in {home_mountpoint_label("en"), home_mountpoint_label("zh"), home_mountpoint_label(lang)}:
+        return HOME_MOUNTPOINT_VALUE
+    return text
 
 
 def ssh_config_defaults(host_alias: str, config_path: str | Path | None = None) -> dict:
@@ -1375,12 +1432,8 @@ def mount_server_locked(server: dict, rclone: str, *, verify_existing: bool = Tr
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     remote_path = server.get("remote_path") or ""
-    configured_mountpoint = server.get("mountpoint") or ""
-    mountpoint = (
-        str(rsshmount.default_mountpoint(remote_name(server)))
-        if not configured_mountpoint or configured_mountpoint.lower() == "auto"
-        else configured_mountpoint
-    )
+    mountpoint = resolve_mountpoint(server)
+    prepare_gui_mountpoint(mountpoint)
     remote = rsshmount.remote_spec(remote_name(server), remote_path)
     log_path = state_dir / f"{remote_name(server)}.log"
     rc_addr = f"127.0.0.1:{free_local_port()}"
@@ -1418,7 +1471,7 @@ def mount_server_locked(server: dict, rclone: str, *, verify_existing: bool = Tr
         cmd.extend(["--dir-cache-time", settings["dir_cache_time"]])
     if settings.get("buffer_size"):
         cmd.extend(["--buffer-size", settings["buffer_size"]])
-    if server.get("network_mode"):
+    if server.get("network_mode") and os.name == "nt" and rsshmount.is_windows_drive(mountpoint):
         cmd.append("--network-mode")
 
     log = log_path.open("ab")
@@ -2499,7 +2552,13 @@ class ServerDialog:
         self.connection_help = Label(self.single_frame, text=self.t("openssh_help"), fg="#666666", wraplength=520, justify=LEFT)
 
         self.row_remote_path(self.existing.get("remote_path", ""), parent=self.single_frame)
-        self.row_combo(self.t("mountpoint"), "mountpoint", mountpoint_choices(), self.existing.get("mountpoint") or "Auto", parent=self.single_frame)
+        self.row_combo(
+            self.t("mountpoint"),
+            "mountpoint",
+            mountpoint_choices(self.lang),
+            mountpoint_value_to_choice(self.existing.get("mountpoint", ""), self.lang),
+            parent=self.single_frame,
+        )
 
         self.build_batch_frame()
 
@@ -2698,9 +2757,7 @@ class ServerDialog:
             return
 
         server_id = self.existing.get("id") or "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
-        mountpoint = self.get("mountpoint")
-        if mountpoint.lower() == "auto":
-            mountpoint = ""
+        mountpoint = mountpoint_choice_to_value(self.get("mountpoint"), self.lang)
 
         result = {
             "id": server_id,

@@ -518,6 +518,10 @@ def default_mountpoint(host: str) -> Path:
             if not windows_drive_in_use(drive):
                 return Path(drive)
         die("no free drive letter found; pass a mountpoint such as X:")
+    return home_mountpoint(host)
+
+
+def home_mountpoint(host: str) -> Path:
     return Path.home() / "mnt" / host
 
 
