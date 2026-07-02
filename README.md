@@ -188,6 +188,12 @@ python -m ssh_mountmate --version
 python -m ssh_mountmate --install-help
 ```
 
+## License
+
+SSH MountMate's application code is released under the MIT License. See `LICENSE`.
+
+The bundled Noto Sans CJK SC font is distributed under the SIL Open Font License. See `src/ssh_mountmate/assets/fonts/LICENSE-Noto-CJK.txt`.
+
 ## 中文说明
 
 SSH MountMate 是一个跨平台桌面程序，用来通过 SSH/SFTP 把 Linux 服务器目录挂载成本地磁盘或本地文件夹。
@@ -377,3 +383,9 @@ python -m py_compile $(find src build -name '*.py' -print) launcher.py
 python -m ssh_mountmate --version
 python -m ssh_mountmate --install-help
 ```
+
+## 授权
+
+SSH MountMate 的应用代码使用 MIT License，详见 `LICENSE`。
+
+内置的 Noto Sans CJK SC 字体使用 SIL Open Font License，详见 `src/ssh_mountmate/assets/fonts/LICENSE-Noto-CJK.txt`。
