@@ -34,7 +34,7 @@ BUFFER_SIZE_CHOICES = ["default (16Mi)", "0", "8Mi", "16Mi", "32Mi", "64Mi", "12
 LANGUAGE_CHOICES = {"auto": "Auto", "en": "English", "zh": "中文"}
 FONT_FAMILY_EN = "Segoe UI"
 FONT_FAMILY_ZH = "Noto Sans CJK SC"
-RCLONE_CONFIG_LOCK = threading.Lock()
+RCLONE_CONFIG_LOCK = threading.RLock()
 MOUNT_ALL_WORKERS = 3
 UNMOUNT_ALL_WORKERS = 5
 TEXT = {
@@ -51,6 +51,9 @@ TEXT = {
         "unmount_all_started": "Unmounting {count} configs...",
         "batch_complete": "Batch operation complete. {done}/{count} changed.",
         "batch_busy": "A batch operation is already running.",
+        "operation_busy": "This config is already being processed.",
+        "mount_started": "Mounting {name}...",
+        "unmount_started": "Unmounting {name}...",
         "checking_deps": "Checking dependencies...",
         "check_dependencies": "Check dependencies",
         "install_missing_dependencies": "Install missing dependencies",
@@ -165,6 +168,9 @@ TEXT = {
         "unmount_all_started": "正在取消挂载 {count} 个配置...",
         "batch_complete": "批量操作完成，已处理 {done}/{count} 个。",
         "batch_busy": "已有批量操作正在执行。",
+        "operation_busy": "这个配置正在处理中。",
+        "mount_started": "正在挂载 {name}...",
+        "unmount_started": "正在取消挂载 {name}...",
         "checking_deps": "正在检查依赖...",
         "check_dependencies": "检查依赖",
         "install_missing_dependencies": "安装缺失依赖",
@@ -1293,6 +1299,12 @@ def ssh_command_for_server(server: dict) -> str:
 
 
 def write_manual_remote(server: dict, rclone: str) -> None:
+    with RCLONE_CONFIG_LOCK:
+        with rsshmount.rclone_config_file_lock():
+            write_manual_remote_unlocked(server, rclone)
+
+
+def write_manual_remote_unlocked(server: dict, rclone: str) -> None:
     import configparser
 
     conf_path = rsshmount.rclone_config_path()
@@ -1348,6 +1360,11 @@ def remote_name(server: dict) -> str:
 
 
 def mount_server(server: dict, rclone: str, *, verify_existing: bool = True) -> dict:
+    with rsshmount.server_operation_file_lock(server["id"]):
+        return mount_server_locked(server, rclone, verify_existing=verify_existing)
+
+
+def mount_server_locked(server: dict, rclone: str, *, verify_existing: bool = True) -> dict:
     if verify_existing and verified_mount_status(server) == "mounted":
         raise RuntimeError("This config is already mounted. Unmount it before mounting again.")
     ensure_remote(server, rclone)
@@ -1420,6 +1437,11 @@ def mount_server(server: dict, rclone: str, *, verify_existing: bool = True) -> 
 
 
 def unmount_server(server: dict) -> None:
+    with rsshmount.server_operation_file_lock(server["id"]):
+        unmount_server_locked(server)
+
+
+def unmount_server_locked(server: dict) -> None:
     state_file = rsshmount.app_state_dir() / f"{server['id']}.json"
     if not state_file.exists():
         raise RuntimeError("This server is not recorded as mounted.")
@@ -1526,6 +1548,8 @@ class App:
         self.card_action_columns = 4
         self.resize_refresh_pending = False
         self.batch_operation_running = False
+        self.active_server_operations: set[str] = set()
+        self.server_operation_lock = threading.Lock()
         self.mount_all_button = None
         self.unmount_all_button = None
 
@@ -1599,6 +1623,29 @@ class App:
         for button in (self.mount_all_button, self.unmount_all_button):
             if button is not None:
                 button.configure(state=state)
+
+    def server_operation_id(self, server: dict) -> str:
+        return server.get("id", "")
+
+    def is_server_operation_active(self, server: dict) -> bool:
+        server_id = self.server_operation_id(server)
+        with self.server_operation_lock:
+            return bool(server_id and server_id in self.active_server_operations)
+
+    def claim_server_operation(self, server: dict) -> bool:
+        server_id = self.server_operation_id(server)
+        if not server_id:
+            return False
+        with self.server_operation_lock:
+            if server_id in self.active_server_operations:
+                return False
+            self.active_server_operations.add(server_id)
+            return True
+
+    def release_server_operation(self, server: dict) -> None:
+        server_id = self.server_operation_id(server)
+        with self.server_operation_lock:
+            self.active_server_operations.discard(server_id)
 
     def refresh_list(self) -> None:
         for child in self.cards_frame.winfo_children():
@@ -1773,13 +1820,14 @@ class App:
         Label(mid, text=f"{server.get('user', '')}@{server.get('host', '')}", bg=row_bg, fg=muted, font=(font_family, 10), wraplength=text_wrap, justify=RIGHT).pack(anchor="e", fill=X)
         Label(mid, text=server.get("remote_path") or "~", bg=row_bg, fg=muted, font=(font_family, 10), wraplength=text_wrap, justify=RIGHT).pack(anchor="e", fill=X)
 
-        can_change_mount = not self.batch_operation_running
-        mount_tooltip = self.t("batch_busy") if self.batch_operation_running else self.t("unmount") if mounted else self.t("mount")
+        operation_active = self.is_server_operation_active(server)
+        can_change_mount = not operation_active
+        mount_tooltip = self.t("operation_busy") if operation_active else self.t("unmount") if mounted else self.t("mount")
         buttons = [
             ("■" if mounted else "▶", mount_tooltip, lambda s=server: self.toggle_mount(s), can_change_mount),
-            ("📂", self.t("open_folder"), lambda s=server: self.open_folder(s), mounted),
-            ("✎", self.t("edit_mounted_disabled") if mounted else self.t("edit_mount"), lambda s=server: self.edit_server(s), not mounted and can_change_mount),
-            ("🗑", self.t("delete_config"), lambda s=server: self.delete_server(s), not mounted and can_change_mount),
+            ("📂", self.t("open_folder"), lambda s=server: self.open_folder(s), mounted and not operation_active),
+            ("✎", self.t("edit_mounted_disabled") if mounted else self.t("edit_mount"), lambda s=server: self.edit_server(s), not mounted and can_change_mount and not self.batch_operation_running),
+            ("🗑", self.t("delete_config"), lambda s=server: self.delete_server(s), not mounted and can_change_mount and not self.batch_operation_running),
         ]
         columns = self.card_action_columns
         for index, (text, tooltip, command, enabled) in enumerate(buttons):
@@ -2160,14 +2208,18 @@ class App:
                     targets = [server for server in servers if statuses.get(server.get("id", "")) != "mounted"]
                 else:
                     targets = [server for server in servers if statuses.get(server.get("id", "")) == "mounted"]
+                targets = [server for server in targets if self.claim_server_operation(server)]
                 count = len(targets)
-                self.root.after(0, lambda: self.status.set(self.t(started_key, count=count)))
+                self.root.after(0, lambda: (self.status.set(self.t(started_key, count=count)), self.refresh_list()))
 
                 def run_one(server: dict) -> None:
-                    if operation == "mount":
-                        mount_server(server, rclone, verify_existing=False)
-                    else:
-                        unmount_server(server)
+                    try:
+                        if operation == "mount":
+                            mount_server(server, rclone)
+                        else:
+                            unmount_server(server)
+                    finally:
+                        self.release_server_operation(server)
 
                 if count:
                     max_workers = max(1, min(workers, count))
@@ -2193,6 +2245,15 @@ class App:
     def unmount_all(self) -> None:
         self.run_batch_operation("unmount", UNMOUNT_ALL_WORKERS, "unmount_all_started")
 
+    def finish_single_operation(self, server: dict, message: str = "", error: str = "") -> None:
+        self.release_server_operation(server)
+        if message:
+            self.status.set(message)
+        self.refresh_list()
+        self.refresh_mount_status_async()
+        if error:
+            self.show_error(error)
+
     def add_config(self) -> None:
         dialog = ServerDialog(self.root, rclone=self.current_rclone(), lang=self.lang, existing_servers=self.servers)
         self.root.wait_window(dialog.window)
@@ -2216,6 +2277,9 @@ class App:
             self.refresh_mount_status_async()
 
     def edit_server(self, server: dict) -> None:
+        if self.batch_operation_running or self.is_server_operation_active(server):
+            self.status.set(self.t("operation_busy"))
+            return
         try:
             index = self.servers.index(server)
         except ValueError:
@@ -2229,23 +2293,31 @@ class App:
             self.refresh_mount_status_async()
 
     def toggle_mount(self, server: dict) -> None:
-        if self.batch_operation_running:
-            self.status.set(self.t("batch_busy"))
+        if not self.claim_server_operation(server):
+            self.status.set(self.t("operation_busy"))
             return
-        if verified_mount_status(server) == "mounted":
-            try:
-                unmount_server(server)
-                self.status.set(self.t("unmounted"))
-            except Exception as exc:
-                self.show_error(str(exc))
-        else:
-            try:
-                state = mount_server(server, self.current_rclone())
-                self.status.set(self.t("mounted_at", remote=state["remote"], mountpoint=state["mountpoint"]))
-            except Exception as exc:
-                self.show_error(str(exc))
+        server = dict(server)
+        cached_status = self.mount_status_cache.get(server.get("id", ""))
+        name = server.get("name") or server.get("id")
+        rclone = self.current_rclone()
+        self.status.set(self.t("unmount_started" if cached_status == "mounted" else "mount_started", name=name))
         self.refresh_list()
-        self.refresh_mount_status_async()
+
+        def worker() -> None:
+            message = ""
+            error = ""
+            try:
+                if verified_mount_status(server) == "mounted":
+                    unmount_server(server)
+                    message = self.t("unmounted")
+                else:
+                    state = mount_server(server, rclone)
+                    message = self.t("mounted_at", remote=state["remote"], mountpoint=state["mountpoint"])
+            except Exception as exc:
+                error = str(exc)
+            self.root.after(0, lambda: self.finish_single_operation(server, message, error))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def open_folder(self, server: dict) -> None:
         if verified_mount_status(server) != "mounted":
@@ -2263,6 +2335,9 @@ class App:
             self.show_error(str(exc))
 
     def delete_server(self, server: dict) -> None:
+        if self.batch_operation_running or self.is_server_operation_active(server):
+            self.status.set(self.t("operation_busy"))
+            return
         status = verified_mount_status(server)
         name = server.get("name") or server.get("id")
         if status == "mounted":

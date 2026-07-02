@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .rclone import augment_process_path
@@ -60,8 +61,73 @@ def app_state_dir() -> Path:
     return xdg_state_home() / APP
 
 
+def app_lock_dir() -> Path:
+    return app_state_dir() / "locks"
+
+
 def pid_file(host: str) -> Path:
     return app_state_dir() / f"{host}.json"
+
+
+def lock_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value)
+    return cleaned.strip("._-") or "default"
+
+
+@contextmanager
+def exclusive_file_lock(path: Path, *, timeout: float = 45.0, description: str = "operation"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    locked = False
+    with path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        while not locked:
+            try:
+                if is_windows():
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"Timed out waiting for {description} lock: {path}") from exc
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            if is_windows():
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def rclone_config_lock_path() -> Path:
+    return app_config_dir() / "rclone.conf.lock"
+
+
+def server_operation_lock_path(server_id: str) -> Path:
+    return app_lock_dir() / f"{lock_name(server_id)}.lock"
+
+
+def rclone_config_file_lock():
+    return exclusive_file_lock(rclone_config_lock_path(), description="rclone config")
+
+
+def server_operation_file_lock(server_id: str):
+    return exclusive_file_lock(server_operation_lock_path(server_id), description=f"{server_id} mount")
 
 
 def default_known_hosts_file() -> Path:
@@ -405,21 +471,22 @@ def ensure_rclone_remote(host: str, ssh_config: str | None, transport: str) -> P
     resolved_ssh = read_ssh_config(host, ssh_config)
     chosen_transport = choose_transport(transport, resolved_ssh)
 
-    parser = configparser.RawConfigParser()
-    parser.optionxform = str
-    parser.read(conf_path)
+    with rclone_config_file_lock():
+        parser = configparser.RawConfigParser()
+        parser.optionxform = str
+        parser.read(conf_path)
 
-    if parser.has_section(host):
-        parser.remove_section(host)
-    parser.add_section(host)
+        if parser.has_section(host):
+            parser.remove_section(host)
+        parser.add_section(host)
 
-    if chosen_transport == "native":
-        write_native_remote(parser, host, resolved_ssh)
-    else:
-        write_external_remote(parser, host, ssh_config)
+        if chosen_transport == "native":
+            write_native_remote(parser, host, resolved_ssh)
+        else:
+            write_external_remote(parser, host, ssh_config)
 
-    with conf_path.open("w", encoding="utf-8") as fh:
-        parser.write(fh)
+        with conf_path.open("w", encoding="utf-8") as fh:
+            parser.write(fh)
 
     return conf_path
 
