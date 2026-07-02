@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+from .rclone import augment_process_path
+
 
 APP = "rsshmount"
 DEFAULT_REMOTE_PATH = ""
@@ -177,6 +179,8 @@ def bundled_rclone(cli_path: str | None) -> str:
         if candidate.exists() and os.access(candidate, os.X_OK):
             return str(candidate)
 
+    if not is_windows():
+        augment_process_path()
     path_rclone = shutil.which("rclone")
     if path_rclone:
         return path_rclone

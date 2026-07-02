@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import platform
+import os
 from pathlib import Path
 
 from .paths import managed_bin_dir
@@ -37,6 +38,82 @@ def common_rclone_paths(system: str | None = None) -> list[Path]:
     ]
 
 
+def _split_path(value: str) -> list[str]:
+    return [part for part in value.split(os.pathsep) if part]
+
+
+def _read_path_file(path: Path) -> list[str]:
+    try:
+        return [line.strip() for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip() and not line.strip().startswith("#")]
+    except OSError:
+        return []
+
+
+def system_path_entries(system: str | None = None) -> list[str]:
+    platform_name = system or platform.system()
+    entries: list[str] = []
+
+    if platform_name in {"Darwin", "Linux"}:
+        entries.extend(_read_path_file(Path("/etc/paths")))
+        paths_dir = Path("/etc/paths.d")
+        if paths_dir.exists():
+            for path_file in sorted(paths_dir.iterdir()):
+                if path_file.is_file():
+                    entries.extend(_read_path_file(path_file))
+
+    if platform_name == "Darwin" and Path("/usr/libexec/path_helper").exists():
+        try:
+            result = subprocess.run(
+                ["/usr/libexec/path_helper", "-s"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=3,
+            )
+            for chunk in result.stdout.replace(";", "\n").splitlines():
+                chunk = chunk.strip()
+                if chunk.startswith("PATH="):
+                    entries.extend(_split_path(chunk.removeprefix("PATH=").strip('"')))
+        except Exception:
+            pass
+
+    shell = os.environ.get("SHELL")
+    if platform_name in {"Darwin", "Linux"} and shell and Path(shell).exists():
+        try:
+            result = subprocess.run(
+                [shell, "-lc", 'printf "%s" "$PATH"'],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=3,
+            )
+            entries.extend(_split_path(result.stdout))
+        except Exception:
+            pass
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if entry not in seen:
+            seen.add(entry)
+            unique.append(entry)
+    return unique
+
+
+def augment_process_path() -> None:
+    current = _split_path(os.environ.get("PATH", ""))
+    merged: list[str] = []
+    seen: set[str] = set()
+    for entry in current + system_path_entries():
+        if entry not in seen:
+            seen.add(entry)
+            merged.append(entry)
+    if merged:
+        os.environ["PATH"] = os.pathsep.join(merged)
+
+
 def resolve_rclone(app_root: Path, configured_path: str = "") -> str:
     if configured_path:
         path = Path(configured_path).expanduser()
@@ -48,6 +125,7 @@ def resolve_rclone(app_root: Path, configured_path: str = "") -> str:
     managed = managed_rclone_path()
     if managed.exists():
         return str(managed)
+    augment_process_path()
     found = shutil.which(current_platform().rclone_binary) or shutil.which("rclone")
     if found:
         return found

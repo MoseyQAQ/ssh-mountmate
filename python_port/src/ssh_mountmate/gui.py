@@ -19,7 +19,7 @@ from tkinter import ttk
 
 from . import VERSION
 from . import core as rsshmount
-from .rclone import manual_install_text
+from .rclone import augment_process_path, manual_install_text
 
 
 APP_TITLE = "SSH MountMate"
@@ -425,6 +425,8 @@ def resolve_rclone_path() -> str:
     bundled = bundled_rclone_path()
     if bundled.exists():
         return str(bundled)
+    if os.name != "nt":
+        augment_process_path()
     found = shutil.which("rclone.exe" if os.name == "nt" else "rclone") or shutil.which("rclone")
     if found:
         return found
