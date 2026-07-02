@@ -40,6 +40,7 @@ TEXT = {
         "checking_deps": "Checking dependencies...",
         "check_dependencies": "Check dependencies",
         "install_missing_dependencies": "Install missing dependencies",
+        "view_mount_logs": "View mount logs",
         "missing_dependencies": "Missing dependencies: {items}. Install now?",
         "deps_status": "rclone: {rclone}    WinFsp: {winfsp}    ssh: {ssh}",
         "ok": "ok",
@@ -52,6 +53,18 @@ TEXT = {
         "write_back": "Write-back delay",
         "dir_cache_time": "Directory cache",
         "buffer_size": "Buffer size",
+        "language_help": "Auto uses Chinese on Chinese systems and English otherwise.",
+        "cache_root_help": "Local folder used by rclone VFS cache. Put it on a fast disk with enough free space.",
+        "vfs_cache_mode_help": "Controls local file caching. Higher modes improve app compatibility but use more disk.",
+        "max_cache_size_help": "Upper limit for VFS cache size. Default means rclone does not enforce this limit.",
+        "max_cache_age_help": "How long cached objects may stay before rclone can evict them. Default is 1 hour.",
+        "min_free_space_help": "Keep this much local disk space free for other applications.",
+        "write_back_help": "Delay before changed files are written back to the server. Longer delays can smooth frequent small writes.",
+        "dir_cache_time_help": "How long rclone keeps remote directory listings. Shorter values see server-side changes sooner but browse slower.",
+        "buffer_size_help": "Memory read buffer per open file. Larger values can improve sequential reads but use more RAM.",
+        "startup_all_help": "Creates or removes Windows logon tasks for all saved configs.",
+        "dependency_help": "Checks and installs rclone, WinFsp, and OpenSSH Client using winget when needed.",
+        "logs_help": "Open recent rclone mount logs for a saved config. Useful for diagnosing failed mounts.",
         "startup_all": "Mount all configs on Windows login",
         "language": "Language",
         "save_settings": "Save settings",
@@ -68,6 +81,7 @@ TEXT = {
         "refresh_remote": "Refresh remote directory cache",
         "refresh_unavailable": "Remount this config to enable refresh",
         "view_log": "View mount log",
+        "select_log_config": "Config",
         "copy": "Copy",
         "close": "Close",
         "error_details": "Error details",
@@ -121,6 +135,7 @@ TEXT = {
         "checking_deps": "正在检查依赖...",
         "check_dependencies": "检查依赖",
         "install_missing_dependencies": "安装缺失依赖",
+        "view_mount_logs": "查看挂载日志",
         "missing_dependencies": "缺少依赖：{items}。现在安装吗？",
         "deps_status": "rclone：{rclone}    WinFsp：{winfsp}    ssh：{ssh}",
         "ok": "正常",
@@ -133,6 +148,18 @@ TEXT = {
         "write_back": "写回延迟",
         "dir_cache_time": "目录缓存",
         "buffer_size": "读取缓冲",
+        "language_help": "自动模式会在中文系统使用中文，其他系统使用英文。",
+        "cache_root_help": "rclone VFS 本地缓存目录。建议放在速度较快且空间充足的磁盘。",
+        "vfs_cache_mode_help": "控制本地文件缓存方式。模式越高，应用兼容性通常越好，但会占用更多磁盘。",
+        "max_cache_size_help": "VFS 缓存最大占用空间。默认表示不由 rclone 强制限制。",
+        "max_cache_age_help": "缓存对象可保留多久后允许被清理。默认是 1 小时。",
+        "min_free_space_help": "为其他应用保留的本地磁盘剩余空间。",
+        "write_back_help": "文件变更后延迟多久写回服务器。更长延迟可缓解频繁小写入带来的抖动。",
+        "dir_cache_time_help": "rclone 保留远程目录列表的时间。越短越容易看到服务器端变化，但浏览会更频繁访问服务器。",
+        "buffer_size_help": "每个打开文件使用的内存读取缓冲。更大可能改善顺序读取，但会占用更多内存。",
+        "startup_all_help": "为全部已保存配置创建或删除 Windows 登录挂载任务。",
+        "dependency_help": "检查 rclone、WinFsp 和 OpenSSH Client；缺失时通过 winget 安装。",
+        "logs_help": "打开某个已保存配置最近的 rclone 挂载日志，用于排查挂载失败。",
         "startup_all": "Windows 登录时挂载全部配置",
         "language": "语言",
         "save_settings": "保存设置",
@@ -149,6 +176,7 @@ TEXT = {
         "refresh_remote": "刷新远程目录缓存",
         "refresh_unavailable": "重新挂载后才能刷新缓存",
         "view_log": "查看挂载日志",
+        "select_log_config": "配置",
         "copy": "复制",
         "close": "关闭",
         "error_details": "错误详情",
@@ -1277,15 +1305,17 @@ class App:
 
         actions = Frame(row, bg=row_bg)
         actions.pack(side=RIGHT)
-        self.icon_button(actions, "■" if mounted else "▶", self.t("unmount") if mounted else self.t("mount"), lambda s=server: self.toggle_mount(s)).pack(side=LEFT, padx=4)
-        self.icon_button(actions, "↻", self.t("refresh_remote") if mounted and current_state(server).get("rc_addr") else self.t("refresh_unavailable"), lambda s=server: self.refresh_remote(s), enabled=mounted and bool(current_state(server).get("rc_addr"))).pack(side=LEFT, padx=4)
-        self.icon_button(actions, "📂", self.t("open_folder"), lambda s=server: self.open_folder(s), enabled=mounted).pack(side=LEFT, padx=4)
-        self.icon_button(actions, "✎", self.t("edit_mounted_disabled") if mounted else self.t("edit_mount"), lambda s=server: self.edit_server(s), enabled=not mounted).pack(side=LEFT, padx=4)
-        self.icon_button(actions, "☰", self.t("view_log"), lambda s=server: self.open_log(s)).pack(side=LEFT, padx=4)
-        self.icon_button(actions, "🗑", self.t("delete_config"), lambda s=server: self.delete_server(s), enabled=not mounted).pack(side=LEFT, padx=4)
+        buttons = [
+            ("■" if mounted else "▶", self.t("unmount") if mounted else self.t("mount"), lambda s=server: self.toggle_mount(s), True),
+            ("📂", self.t("open_folder"), lambda s=server: self.open_folder(s), mounted),
+            ("✎", self.t("edit_mounted_disabled") if mounted else self.t("edit_mount"), lambda s=server: self.edit_server(s), not mounted),
+            ("🗑", self.t("delete_config"), lambda s=server: self.delete_server(s), not mounted),
+        ]
+        for index, (text, tooltip, command, enabled) in enumerate(buttons):
+            self.icon_button(actions, text, tooltip, command, enabled=enabled).grid(row=index // 2, column=index % 2, padx=2, pady=2)
 
     def icon_button(self, parent, text: str, tooltip: str, command, *, enabled: bool = True):
-        button = Button(parent, text=text, width=3, height=1, command=command, font=("Segoe UI Emoji", 14))
+        button = Button(parent, text=text, width=2, height=1, command=command, font=("Segoe UI Emoji", 12))
         if not enabled:
             button.configure(fg="#777777", command=lambda: None)
         Tooltip(button, tooltip)
@@ -1360,8 +1390,12 @@ class App:
         frame = Frame(window, padx=14, pady=14)
         frame.pack(fill=BOTH, expand=True)
         Label(frame, textvariable=self.dep_status, anchor="w", justify=LEFT).pack(fill=X, pady=(0, 12))
-        Button(frame, text=self.t("check_dependencies"), command=self.check_dependencies_async).pack(fill=X, pady=3)
-        Button(frame, text=self.t("install_missing_dependencies"), command=self.install_deps_async).pack(fill=X, pady=3)
+        deps_check_button = Button(frame, text=self.t("check_dependencies"), command=self.check_dependencies_async)
+        deps_check_button.pack(fill=X, pady=3)
+        deps_install_button = Button(frame, text=self.t("install_missing_dependencies"), command=self.install_deps_async)
+        deps_install_button.pack(fill=X, pady=3)
+        logs_button = Button(frame, text=self.t("view_mount_logs"), command=self.open_logs)
+        logs_button.pack(fill=X, pady=3)
 
         ttk.Separator(frame).pack(fill=X, pady=12)
 
@@ -1376,53 +1410,98 @@ class App:
         startup_all = BooleanVar(value=bool(settings.get("startup_all", False)))
         language = StringVar(value=language_choice_from_setting(settings.get("language", "auto")))
 
+        def attach_help(widget, key: str) -> None:
+            Tooltip(widget, self.t(key))
+
+        attach_help(deps_check_button, "dependency_help")
+        attach_help(deps_install_button, "dependency_help")
+        attach_help(logs_button, "logs_help")
+
         lang_row = Frame(frame)
         lang_row.pack(fill=X, pady=3)
-        Label(lang_row, text=self.t("language"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(lang_row, values=list(LANGUAGE_CHOICES.values()), textvariable=language, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        lang_label = Label(lang_row, text=self.t("language"), width=16, anchor="w")
+        lang_label.pack(side=LEFT)
+        language_combo = ttk.Combobox(lang_row, values=list(LANGUAGE_CHOICES.values()), textvariable=language, state="readonly")
+        language_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(lang_label, "language_help")
+        attach_help(language_combo, "language_help")
 
         cache_row = Frame(frame)
         cache_row.pack(fill=X, pady=3)
-        Label(cache_row, text=self.t("cache_root"), width=16, anchor="w").pack(side=LEFT)
-        Entry(cache_row, textvariable=cache_root).pack(side=LEFT, fill=X, expand=True)
+        cache_label = Label(cache_row, text=self.t("cache_root"), width=16, anchor="w")
+        cache_label.pack(side=LEFT)
+        cache_entry = Entry(cache_row, textvariable=cache_root)
+        cache_entry.pack(side=LEFT, fill=X, expand=True)
         Button(cache_row, text="...", command=lambda: self.pick_cache_root(cache_root)).pack(side=RIGHT)
+        attach_help(cache_label, "cache_root_help")
+        attach_help(cache_entry, "cache_root_help")
 
         mode_row = Frame(frame)
         mode_row.pack(fill=X, pady=3)
-        Label(mode_row, text=self.t("vfs_cache_mode"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(mode_row, values=["off", "minimal", "writes", "full"], textvariable=cache_mode, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        mode_label = Label(mode_row, text=self.t("vfs_cache_mode"), width=16, anchor="w")
+        mode_label.pack(side=LEFT)
+        mode_combo = ttk.Combobox(mode_row, values=["off", "minimal", "writes", "full"], textvariable=cache_mode, state="readonly")
+        mode_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(mode_label, "vfs_cache_mode_help")
+        attach_help(mode_combo, "vfs_cache_mode_help")
 
         size_row = Frame(frame)
         size_row.pack(fill=X, pady=3)
-        Label(size_row, text=self.t("max_cache_size"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(size_row, values=CACHE_SIZE_CHOICES, textvariable=cache_max_size, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        size_label = Label(size_row, text=self.t("max_cache_size"), width=16, anchor="w")
+        size_label.pack(side=LEFT)
+        size_combo = ttk.Combobox(size_row, values=CACHE_SIZE_CHOICES, textvariable=cache_max_size, state="readonly")
+        size_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(size_label, "max_cache_size_help")
+        attach_help(size_combo, "max_cache_size_help")
 
         age_row = Frame(frame)
         age_row.pack(fill=X, pady=3)
-        Label(age_row, text=self.t("max_cache_age"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(age_row, values=CACHE_AGE_CHOICES, textvariable=cache_max_age, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        age_label = Label(age_row, text=self.t("max_cache_age"), width=16, anchor="w")
+        age_label.pack(side=LEFT)
+        age_combo = ttk.Combobox(age_row, values=CACHE_AGE_CHOICES, textvariable=cache_max_age, state="readonly")
+        age_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(age_label, "max_cache_age_help")
+        attach_help(age_combo, "max_cache_age_help")
 
         min_free_row = Frame(frame)
         min_free_row.pack(fill=X, pady=3)
-        Label(min_free_row, text=self.t("min_free_space"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(min_free_row, values=MIN_FREE_CHOICES, textvariable=min_free_space, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        min_free_label = Label(min_free_row, text=self.t("min_free_space"), width=16, anchor="w")
+        min_free_label.pack(side=LEFT)
+        min_free_combo = ttk.Combobox(min_free_row, values=MIN_FREE_CHOICES, textvariable=min_free_space, state="readonly")
+        min_free_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(min_free_label, "min_free_space_help")
+        attach_help(min_free_combo, "min_free_space_help")
 
         write_back_row = Frame(frame)
         write_back_row.pack(fill=X, pady=3)
-        Label(write_back_row, text=self.t("write_back"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(write_back_row, values=WRITE_BACK_CHOICES, textvariable=write_back, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        write_back_label = Label(write_back_row, text=self.t("write_back"), width=16, anchor="w")
+        write_back_label.pack(side=LEFT)
+        write_back_combo = ttk.Combobox(write_back_row, values=WRITE_BACK_CHOICES, textvariable=write_back, state="readonly")
+        write_back_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(write_back_label, "write_back_help")
+        attach_help(write_back_combo, "write_back_help")
 
         dir_cache_row = Frame(frame)
         dir_cache_row.pack(fill=X, pady=3)
-        Label(dir_cache_row, text=self.t("dir_cache_time"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(dir_cache_row, values=DIR_CACHE_TIME_CHOICES, textvariable=dir_cache_time, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        dir_cache_label = Label(dir_cache_row, text=self.t("dir_cache_time"), width=16, anchor="w")
+        dir_cache_label.pack(side=LEFT)
+        dir_cache_combo = ttk.Combobox(dir_cache_row, values=DIR_CACHE_TIME_CHOICES, textvariable=dir_cache_time, state="readonly")
+        dir_cache_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(dir_cache_label, "dir_cache_time_help")
+        attach_help(dir_cache_combo, "dir_cache_time_help")
 
         buffer_row = Frame(frame)
         buffer_row.pack(fill=X, pady=3)
-        Label(buffer_row, text=self.t("buffer_size"), width=16, anchor="w").pack(side=LEFT)
-        ttk.Combobox(buffer_row, values=BUFFER_SIZE_CHOICES, textvariable=buffer_size, state="readonly").pack(side=LEFT, fill=X, expand=True)
+        buffer_label = Label(buffer_row, text=self.t("buffer_size"), width=16, anchor="w")
+        buffer_label.pack(side=LEFT)
+        buffer_combo = ttk.Combobox(buffer_row, values=BUFFER_SIZE_CHOICES, textvariable=buffer_size, state="readonly")
+        buffer_combo.pack(side=LEFT, fill=X, expand=True)
+        attach_help(buffer_label, "buffer_size_help")
+        attach_help(buffer_combo, "buffer_size_help")
 
-        Checkbutton(frame, text=self.t("startup_all"), variable=startup_all).pack(anchor="w", pady=8)
+        startup_check = Checkbutton(frame, text=self.t("startup_all"), variable=startup_all)
+        startup_check.pack(anchor="w", pady=8)
+        attach_help(startup_check, "startup_all_help")
 
         def save() -> None:
             new_settings = load_settings()
@@ -1523,6 +1602,36 @@ class App:
 
     def show_error(self, message: str) -> None:
         self.show_text_window(self.t("error_details"), message)
+
+    def open_logs(self) -> None:
+        if not self.servers:
+            self.show_text_window(self.t("mount_log"), self.t("no_configs"))
+            return
+        window = Toplevel(self.root)
+        window.title(self.t("view_mount_logs"))
+        window.geometry("460x140")
+        frame = Frame(window, padx=12, pady=12)
+        frame.pack(fill=BOTH, expand=True)
+        choices: dict[str, dict] = {}
+        for index, server in enumerate(self.servers, 1):
+            label = f"{server.get('name') or server.get('id')}  {display_mountpoint(server)}"
+            if label in choices:
+                label = f"{label}  #{index}"
+            choices[label] = server
+        selected = StringVar(value=next(iter(choices)))
+        row = Frame(frame)
+        row.pack(fill=X, pady=(0, 10))
+        Label(row, text=self.t("select_log_config"), width=10, anchor="w").pack(side=LEFT)
+        ttk.Combobox(row, values=list(choices), textvariable=selected, state="readonly").pack(side=LEFT, fill=X, expand=True)
+
+        def open_selected() -> None:
+            server = choices.get(selected.get())
+            if server:
+                window.destroy()
+                self.open_log(server)
+
+        Button(frame, text=self.t("view_log"), command=open_selected).pack(side=RIGHT)
+        Button(frame, text=self.t("close"), command=window.destroy).pack(side=RIGHT, padx=6)
 
     def open_log(self, server: dict) -> None:
         path = current_log_path(server)
