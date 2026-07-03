@@ -212,25 +212,33 @@ LINUX_DEPENDENCY_COMMANDS = [
         "label": "Debian family (Debian, Ubuntu, Linux Mint, Pop!_OS)",
         "ids": {"debian", "ubuntu", "linuxmint", "pop"},
         "likes": {"debian", "ubuntu"},
-        "command": "sudo apt update && sudo apt install -y fuse3 openssh-client",
+        "install": "sudo apt update && sudo apt install -y",
+        "fuse": "fuse3",
+        "ssh": "openssh-client",
     },
     {
         "label": "Fedora/RHEL family (Fedora, RHEL, CentOS Stream, Rocky Linux, AlmaLinux)",
         "ids": {"fedora", "rhel", "centos", "rocky", "almalinux"},
         "likes": {"fedora", "rhel", "centos"},
-        "command": "sudo dnf install -y fuse3 openssh-clients",
+        "install": "sudo dnf install -y",
+        "fuse": "fuse3",
+        "ssh": "openssh-clients",
     },
     {
         "label": "Arch family (Arch Linux, Manjaro, EndeavourOS)",
         "ids": {"arch", "manjaro", "endeavouros"},
         "likes": {"arch"},
-        "command": "sudo pacman -S --needed fuse3 openssh",
+        "install": "sudo pacman -S --needed",
+        "fuse": "fuse3",
+        "ssh": "openssh",
     },
     {
         "label": "openSUSE/SUSE family (openSUSE Leap, Tumbleweed, SLES)",
         "ids": {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "sles"},
         "likes": {"suse", "opensuse"},
-        "command": "sudo zypper install -y fuse3 openssh",
+        "install": "sudo zypper install -y",
+        "fuse": "fuse3",
+        "ssh": "openssh",
     },
 ]
 
@@ -249,67 +257,125 @@ def linux_os_release(path: Path = Path("/etc/os-release")) -> dict[str, str]:
     return data
 
 
-def preferred_linux_dependency_command() -> tuple[str, str] | None:
+def linux_dependency_command(item: dict, missing: set[str] | None = None) -> str:
+    packages: list[str] = []
+    if missing is None or "FUSE" in missing:
+        packages.append(str(item["fuse"]))
+    if missing is None or "OpenSSH" in missing:
+        packages.append(str(item["ssh"]))
+    return f"{item['install']} {' '.join(packages)}"
+
+
+def preferred_linux_dependency_command(missing: set[str] | None = None) -> tuple[str, str] | None:
     release = linux_os_release()
     distro_id = release.get("ID", "").lower()
     id_like = set(release.get("ID_LIKE", "").lower().split())
     for item in LINUX_DEPENDENCY_COMMANDS:
         if distro_id in item["ids"] or id_like.intersection(item["likes"]):
-            return str(item["label"]), str(item["command"])
+            return str(item["label"]), linux_dependency_command(item, missing)
     return None
 
 
-def manual_install_commands() -> dict[str, list[str]]:
-    linux_commands = [
-        "rclone:",
-        "curl https://rclone.org/install.sh | sudo bash",
-        "or use your distro package manager, for example: sudo apt install rclone",
-        f"Manual zip: {rclone_download_url(system='Linux')}",
-        "",
-        "FUSE and OpenSSH:",
-    ]
-    preferred = preferred_linux_dependency_command() if platform.system() == "Linux" else None
-    if preferred:
-        label, command = preferred
-        linux_commands.extend(["Recommended for this system:", label, command, ""])
-    linux_commands.append("All common distro commands:")
-    for item in LINUX_DEPENDENCY_COMMANDS:
-        linux_commands.extend([str(item["label"]) + ":", str(item["command"])])
+def normalized_missing_dependencies(missing: list[str] | set[str] | None) -> set[str] | None:
+    if missing is None:
+        return None
+    normalized: set[str] = set()
+    for item in missing:
+        key = str(item).lower()
+        if key == "rclone":
+            normalized.add("rclone")
+        elif key in {"winfsp", "macfuse", "fuse"}:
+            normalized.add({"winfsp": "WinFsp", "macfuse": "macFUSE", "fuse": "FUSE"}[key])
+        elif key in {"openssh", "ssh", "openssh client"}:
+            normalized.add("OpenSSH")
+    return normalized
 
+
+def linux_install_commands(missing: set[str] | None = None) -> list[str]:
+    commands: list[str] = []
+    if missing is None or "rclone" in missing:
+        commands.extend(
+            [
+                "rclone:",
+                "curl https://rclone.org/install.sh | sudo bash",
+                "or use your distro package manager, for example: sudo apt install rclone",
+                f"Manual zip: {rclone_download_url(system='Linux')}",
+                "",
+            ]
+        )
+    if missing is None or {"FUSE", "OpenSSH"}.intersection(missing):
+        label = "FUSE and OpenSSH:"
+        if missing is not None and "FUSE" in missing and "OpenSSH" not in missing:
+            label = "FUSE:"
+        elif missing is not None and "OpenSSH" in missing and "FUSE" not in missing:
+            label = "OpenSSH Client:"
+        commands.append(label)
+        preferred = preferred_linux_dependency_command(missing) if platform.system() == "Linux" else None
+        if preferred:
+            distro_label, command = preferred
+            commands.extend(["Recommended for this system:", distro_label, command, ""])
+        commands.append("All common distro commands:")
+        for item in LINUX_DEPENDENCY_COMMANDS:
+            commands.extend([str(item["label"]) + ":", linux_dependency_command(item, missing)])
+    return commands
+
+
+def manual_install_commands(missing: list[str] | set[str] | None = None) -> dict[str, list[str]]:
+    missing_set = normalized_missing_dependencies(missing)
+    include_all = missing_set is None
     return {
-        "Windows": [
+        "Windows": [line for key, lines in [
+            ("rclone", [
             "rclone:",
             "winget install --id Rclone.Rclone -e",
             f"Download and unzip: {rclone_download_url(system='Windows')}",
             "Place rclone.exe on PATH or next to SSHMountMate.exe.",
             "",
+            ]),
+            ("WinFsp", [
             "WinFsp:",
             "winget install --id WinFsp.WinFsp -e",
             "or download the installer from: https://winfsp.dev/rel/",
             "",
+            ]),
+            ("OpenSSH", [
             "OpenSSH Client:",
             'powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"',
-        ],
-        "macOS": [
+            ]),
+        ] if include_all or key in missing_set for line in lines],
+        "macOS": [line for key, lines in [
+            ("rclone", [
             "rclone:",
             "Do not use the Homebrew rclone package for mounts; Homebrew rclone cannot run rclone mount on macOS.",
             "curl https://rclone.org/install.sh | sudo bash",
             f"Manual zip: {rclone_download_url(system='Darwin')}",
             "",
+            ]),
+            ("macFUSE", [
             "macFUSE:",
             "Install macFUSE with Homebrew Cask: brew install --cask macfuse",
             "If macFUSE asks for approval, enable it in System Settings -> Privacy & Security, then retry.",
             "",
+            ]),
+            ("OpenSSH", [
             "OpenSSH Client:",
             "OpenSSH is normally included with macOS. If ssh is missing, run: xcode-select --install",
-        ],
-        "Linux": linux_commands,
+            ]),
+        ] if include_all or key in missing_set for line in lines],
+        "Linux": linux_install_commands(missing_set),
     }
 
 
-def manual_install_text() -> str:
+def manual_install_text(missing: list[str] | set[str] | None = None) -> str:
     lines = ["manual dependency install options", ""]
-    for system, commands in manual_install_commands().items():
+    commands_by_system = manual_install_commands(missing)
+    if missing is not None:
+        current = platform.system()
+        current = "macOS" if current == "Darwin" else current
+        commands_by_system = {current: commands_by_system.get(current, [])}
+    for system, commands in commands_by_system.items():
+        if not commands:
+            continue
         lines.append(f"{system}:")
         for command in commands:
             lines.append(f"  {command}" if command else "")

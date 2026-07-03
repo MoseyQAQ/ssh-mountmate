@@ -2313,7 +2313,7 @@ class App:
                 if not ssh_installed():
                     manual_missing.append("OpenSSH")
                 if manual_missing:
-                    raise RuntimeError("Manual installation is required for: " + ", ".join(manual_missing) + "\n\n" + manual_install_text())
+                    raise RuntimeError("Manual installation is required for: " + ", ".join(manual_missing) + "\n\n" + manual_install_text(manual_missing))
             rclone_path = resolve_rclone_path()
             self.root.after(0, lambda: self.on_dependency_install_done(rclone_path))
         except Exception as exc:
