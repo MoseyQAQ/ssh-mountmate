@@ -32,6 +32,13 @@ Windows:
 - WinFsp
 - OpenSSH Client
 
+Copyable Windows dependency commands:
+
+```powershell
+winget install --id WinFsp.WinFsp -e
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"
+```
+
 macOS:
 
 - rclone
@@ -65,6 +72,32 @@ Linux:
 - rclone
 - FUSE support, usually `fuse3`
 - OpenSSH Client
+
+Copyable Linux dependency commands:
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install -y fuse3 openssh-client
+
+# Fedora/RHEL
+sudo dnf install -y fuse3 openssh-clients
+
+# Arch
+sudo pacman -S --needed fuse3 openssh
+
+# openSUSE
+sudo zypper install -y fuse3 openssh
+```
+
+## Managed rclone Download
+
+When rclone is missing, SSH MountMate builds the official zip URL from the current platform and CPU architecture:
+
+```text
+https://downloads.rclone.org/rclone-current-<platform>-<arch>.zip
+```
+
+The platform part is `windows`, `osx`, or `linux`. The architecture part is usually `amd64` for Intel/AMD 64-bit machines or `arm64` for Apple Silicon/AArch64 machines. The extracted `rclone` binary is stored in SSH MountMate's user data directory under `bin/` and is preferred over PATH on later launches.
 
 The remote server is assumed to be a Linux server reachable over SSH/SFTP.
 
@@ -251,6 +284,13 @@ Windows：
 - WinFsp
 - OpenSSH Client
 
+Windows 依赖可复制命令：
+
+```powershell
+winget install --id WinFsp.WinFsp -e
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"
+```
+
 macOS：
 
 - rclone
@@ -284,6 +324,32 @@ Linux：
 - rclone
 - FUSE 支持，通常是 `fuse3`
 - OpenSSH Client
+
+Linux 依赖可复制命令：
+
+```bash
+# Debian/Ubuntu
+sudo apt update && sudo apt install -y fuse3 openssh-client
+
+# Fedora/RHEL
+sudo dnf install -y fuse3 openssh-clients
+
+# Arch
+sudo pacman -S --needed fuse3 openssh
+
+# openSUSE
+sudo zypper install -y fuse3 openssh
+```
+
+## 托管 rclone 下载
+
+缺少 rclone 时，SSH MountMate 会根据当前平台和 CPU 架构拼出官方 zip 下载地址：
+
+```text
+https://downloads.rclone.org/rclone-current-<platform>-<arch>.zip
+```
+
+其中平台字段是 `windows`、`osx` 或 `linux`。架构字段通常是 Intel/AMD 64 位机器的 `amd64`，或 Apple Silicon/AArch64 机器的 `arm64`。解压出来的 `rclone` 会保存到 SSH MountMate 用户数据目录的 `bin/` 下，后续启动时优先使用。
 
 远端服务器默认按 Linux SSH/SFTP 服务器处理。
 

@@ -206,21 +206,39 @@ def install_managed_rclone() -> Path:
 def manual_install_commands() -> dict[str, list[str]]:
     return {
         "Windows": [
+            "rclone:",
             "winget install --id Rclone.Rclone -e",
             f"Download and unzip: {rclone_download_url(system='Windows')}",
             "Place rclone.exe on PATH or next to SSHMountMate.exe.",
+            "",
+            "WinFsp:",
+            "winget install --id WinFsp.WinFsp -e",
+            "or download the installer from: https://winfsp.dev/rel/",
+            "",
+            "OpenSSH Client:",
+            'powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0"',
         ],
         "macOS": [
+            "rclone:",
             "Do not use the Homebrew rclone package for mounts; Homebrew rclone cannot run rclone mount on macOS.",
             "curl https://rclone.org/install.sh | sudo bash",
             f"Manual zip: {rclone_download_url(system='Darwin')}",
+            "",
+            "macFUSE:",
             "Install macFUSE with Homebrew Cask: brew install --cask macfuse",
             "If macFUSE asks for approval, enable it in System Settings -> Privacy & Security, then retry.",
         ],
         "Linux": [
+            "rclone:",
             "curl https://rclone.org/install.sh | sudo bash",
             "or use your distro package manager, for example: sudo apt install rclone",
             f"Manual zip: {rclone_download_url(system='Linux')}",
+            "",
+            "FUSE and OpenSSH:",
+            "Debian/Ubuntu: sudo apt update && sudo apt install -y fuse3 openssh-client",
+            "Fedora/RHEL: sudo dnf install -y fuse3 openssh-clients",
+            "Arch: sudo pacman -S --needed fuse3 openssh",
+            "openSUSE: sudo zypper install -y fuse3 openssh",
         ],
     }
 
@@ -230,6 +248,6 @@ def manual_install_text() -> str:
     for system, commands in manual_install_commands().items():
         lines.append(f"{system}:")
         for command in commands:
-            lines.append(f"  {command}")
+            lines.append(f"  {command}" if command else "")
         lines.append("")
     return "\n".join(lines).rstrip()
