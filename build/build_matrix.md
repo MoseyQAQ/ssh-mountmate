@@ -9,11 +9,13 @@ target platform instead.
 | macOS arm64/x64 | `macos-latest` | `SSHMountMate` or `.app` bundle |
 | Linux x64 | `ubuntu-latest` | `SSHMountMate` tarball/AppImage candidate |
 
-Future CI can install `.[build]` and run:
+CI installs `.[build]` and runs:
 
 ```bash
 python build/build_local.py
 ```
 
-The rclone binary can later be placed under a resource directory or downloaded
-from `downloads.rclone.org` into a managed per-user bin directory.
+The build script downloads the official rclone zip for the runner platform and
+embeds the extracted binary with PyInstaller. Runtime fallback can still
+download rclone into a managed per-user bin directory when the bundled binary is
+unavailable.

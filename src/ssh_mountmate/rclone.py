@@ -178,13 +178,13 @@ def rclone_download_url(version: str = "current", system: str | None = None, arc
     return f"https://downloads.rclone.org/{target}"
 
 
-def install_managed_rclone() -> Path:
+def install_rclone_to(target_dir: Path) -> Path:
     platform_info = current_platform()
     binary = platform_info.rclone_binary
     arch = rclone_download_arch()
     url = rclone_download_url(system=platform_info.system, arch=arch)
-    managed = managed_rclone_path()
-    managed.parent.mkdir(parents=True, exist_ok=True)
+    target = target_dir / binary
+    target.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="ssh-mountmate-rclone-") as temp_name:
         temp = Path(temp_name)
@@ -195,12 +195,16 @@ def install_managed_rclone() -> Path:
             if not members:
                 raise RuntimeError(f"Downloaded rclone archive did not contain {binary}: {url}")
             extracted = Path(zf.extract(members[0], temp))
-            shutil.copy2(extracted, managed)
+            shutil.copy2(extracted, target)
 
     if platform_info.system != "Windows":
-        mode = managed.stat().st_mode
-        managed.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return managed
+        mode = target.stat().st_mode
+        target.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return target
+
+
+def install_managed_rclone() -> Path:
+    return install_rclone_to(managed_bin_dir())
 
 
 def manual_install_commands() -> dict[str, list[str]]:

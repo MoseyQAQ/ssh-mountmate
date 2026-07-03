@@ -12,6 +12,7 @@ bin/
 dist/
 release/
 build/generated-assets/
+build/generated-bin/
 build/pyinstaller-work/
 build/*.spec
 

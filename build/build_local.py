@@ -76,12 +76,39 @@ def prepare_assets(root: Path) -> Path:
     return generated_assets
 
 
+def prepare_rclone_binary(root: Path) -> Path:
+    sys.path.insert(0, str(root / "src"))
+    from ssh_mountmate.rclone import install_rclone_to, rclone_version
+
+    generated_bin = root / "build" / "generated-bin" / "bin"
+    if generated_bin.exists():
+        shutil.rmtree(generated_bin)
+    generated_bin.mkdir(parents=True, exist_ok=True)
+
+    rclone = install_rclone_to(generated_bin)
+    print(f"Bundled rclone: {rclone} ({rclone_version(str(rclone))})")
+    return rclone
+
+
+def copy_release_notices(root: Path, dist: Path) -> None:
+    notices = root / "THIRD_PARTY_NOTICES.md"
+    if notices.exists():
+        shutil.copy2(notices, dist / notices.name)
+    source_licenses = root / "licenses"
+    if source_licenses.exists():
+        target_licenses = dist / "licenses"
+        if target_licenses.exists():
+            shutil.rmtree(target_licenses)
+        shutil.copytree(source_licenses, target_licenses)
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     dist = root / "dist"
     work = root / "build" / "pyinstaller-work"
     data_separator = ";" if sys.platform.startswith("win") else ":"
     assets = prepare_assets(root)
+    rclone = prepare_rclone_binary(root)
     cmd = [
         sys.executable,
         "-m",
@@ -98,9 +125,14 @@ def main() -> int:
         str(root / "build"),
         "--add-data",
         f"{assets}{data_separator}assets",
+        "--add-binary",
+        f"{rclone}{data_separator}bin",
         str(root / "launcher.py"),
     ]
-    return subprocess.call(cmd)
+    result = subprocess.call(cmd)
+    if result == 0:
+        copy_release_notices(root, dist)
+    return result
 
 
 if __name__ == "__main__":
