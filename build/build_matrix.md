@@ -5,9 +5,12 @@ target platform instead.
 
 | Target | Builder | Expected artifact |
 | --- | --- | --- |
-| Windows x64 | `windows-latest` | `SSHMountMate.exe` |
-| macOS arm64/x64 | `macos-latest` | `SSHMountMate` or `.app` bundle |
-| Linux x64 | `ubuntu-latest` | `SSHMountMate` tarball/AppImage candidate |
+| Windows x64 | `windows-latest` | `SSHMountMate-windows-x64.zip` |
+| Windows arm64 | `windows-11-arm` | `SSHMountMate-windows-arm64.zip` |
+| macOS x64 | `macos-15-intel` | `SSHMountMate-macos-x64.zip` |
+| macOS arm64 | `macos-14` | `SSHMountMate-macos-arm64.zip` |
+| Linux x64 | `ubuntu-latest` | `SSHMountMate-linux-x64.zip` |
+| Linux arm64 | `ubuntu-24.04-arm` | `SSHMountMate-linux-arm64.zip` |
 
 CI installs `.[build]` and runs:
 

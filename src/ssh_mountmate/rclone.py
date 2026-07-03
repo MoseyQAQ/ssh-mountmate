@@ -207,7 +207,75 @@ def install_managed_rclone() -> Path:
     return install_rclone_to(managed_bin_dir())
 
 
+LINUX_DEPENDENCY_COMMANDS = [
+    {
+        "label": "Debian family (Debian, Ubuntu, Linux Mint, Pop!_OS)",
+        "ids": {"debian", "ubuntu", "linuxmint", "pop"},
+        "likes": {"debian", "ubuntu"},
+        "command": "sudo apt update && sudo apt install -y fuse3 openssh-client",
+    },
+    {
+        "label": "Fedora/RHEL family (Fedora, RHEL, CentOS Stream, Rocky Linux, AlmaLinux)",
+        "ids": {"fedora", "rhel", "centos", "rocky", "almalinux"},
+        "likes": {"fedora", "rhel", "centos"},
+        "command": "sudo dnf install -y fuse3 openssh-clients",
+    },
+    {
+        "label": "Arch family (Arch Linux, Manjaro, EndeavourOS)",
+        "ids": {"arch", "manjaro", "endeavouros"},
+        "likes": {"arch"},
+        "command": "sudo pacman -S --needed fuse3 openssh",
+    },
+    {
+        "label": "openSUSE/SUSE family (openSUSE Leap, Tumbleweed, SLES)",
+        "ids": {"opensuse", "opensuse-leap", "opensuse-tumbleweed", "sles"},
+        "likes": {"suse", "opensuse"},
+        "command": "sudo zypper install -y fuse3 openssh",
+    },
+]
+
+
+def linux_os_release(path: Path = Path("/etc/os-release")) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return {}
+    data: dict[str, str] = {}
+    for line in lines:
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key] = value.strip().strip('"').strip("'")
+    return data
+
+
+def preferred_linux_dependency_command() -> tuple[str, str] | None:
+    release = linux_os_release()
+    distro_id = release.get("ID", "").lower()
+    id_like = set(release.get("ID_LIKE", "").lower().split())
+    for item in LINUX_DEPENDENCY_COMMANDS:
+        if distro_id in item["ids"] or id_like.intersection(item["likes"]):
+            return str(item["label"]), str(item["command"])
+    return None
+
+
 def manual_install_commands() -> dict[str, list[str]]:
+    linux_commands = [
+        "rclone:",
+        "curl https://rclone.org/install.sh | sudo bash",
+        "or use your distro package manager, for example: sudo apt install rclone",
+        f"Manual zip: {rclone_download_url(system='Linux')}",
+        "",
+        "FUSE and OpenSSH:",
+    ]
+    preferred = preferred_linux_dependency_command() if platform.system() == "Linux" else None
+    if preferred:
+        label, command = preferred
+        linux_commands.extend(["Recommended for this system:", label, command, ""])
+    linux_commands.append("All common distro commands:")
+    for item in LINUX_DEPENDENCY_COMMANDS:
+        linux_commands.extend([str(item["label"]) + ":", str(item["command"])])
+
     return {
         "Windows": [
             "rclone:",
@@ -232,18 +300,7 @@ def manual_install_commands() -> dict[str, list[str]]:
             "Install macFUSE with Homebrew Cask: brew install --cask macfuse",
             "If macFUSE asks for approval, enable it in System Settings -> Privacy & Security, then retry.",
         ],
-        "Linux": [
-            "rclone:",
-            "curl https://rclone.org/install.sh | sudo bash",
-            "or use your distro package manager, for example: sudo apt install rclone",
-            f"Manual zip: {rclone_download_url(system='Linux')}",
-            "",
-            "FUSE and OpenSSH:",
-            "Debian/Ubuntu: sudo apt update && sudo apt install -y fuse3 openssh-client",
-            "Fedora/RHEL: sudo dnf install -y fuse3 openssh-clients",
-            "Arch: sudo pacman -S --needed fuse3 openssh",
-            "openSUSE: sudo zypper install -y fuse3 openssh",
-        ],
+        "Linux": linux_commands,
     }
 
 

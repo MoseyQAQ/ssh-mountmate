@@ -73,21 +73,31 @@ Linux:
 - FUSE support, usually `fuse3`
 - OpenSSH Client
 
-Copyable Linux dependency commands:
+SSH MountMate detects Linux distributions from `/etc/os-release` and shows the matching FUSE/OpenSSH command first in the app. The main families are:
+
+- Debian family: Debian, Ubuntu, Linux Mint, Pop!_OS
+- Fedora/RHEL family: Fedora, RHEL, CentOS Stream, Rocky Linux, AlmaLinux
+- Arch family: Arch Linux, Manjaro, EndeavourOS
+- openSUSE/SUSE family: openSUSE Leap, Tumbleweed, SLES
+
+<details>
+<summary>All common Linux dependency commands</summary>
 
 ```bash
-# Debian/Ubuntu
+# Debian family: Debian, Ubuntu, Linux Mint, Pop!_OS
 sudo apt update && sudo apt install -y fuse3 openssh-client
 
-# Fedora/RHEL
+# Fedora/RHEL family: Fedora, RHEL, CentOS Stream, Rocky Linux, AlmaLinux
 sudo dnf install -y fuse3 openssh-clients
 
-# Arch
+# Arch family: Arch Linux, Manjaro, EndeavourOS
 sudo pacman -S --needed fuse3 openssh
 
-# openSUSE
+# openSUSE/SUSE family: openSUSE Leap, Tumbleweed, SLES
 sudo zypper install -y fuse3 openssh
 ```
+
+</details>
 
 ## Bundled And Managed rclone
 
@@ -108,13 +118,27 @@ The remote server is assumed to be a Linux server reachable over SSH/SFTP.
 Use the latest GitHub Release and download the package for your platform:
 
 - `SSHMountMate-windows-x64.zip`
+- `SSHMountMate-windows-arm64.zip`
 - `SSHMountMate-macos-x64.zip`
 - `SSHMountMate-macos-arm64.zip`
 - `SSHMountMate-linux-x64.zip`
+- `SSHMountMate-linux-arm64.zip`
 
 Release builds are produced by GitHub Actions from the same Python source tree.
 
-Use `SSHMountMate-macos-x64.zip` for Intel Macs and `SSHMountMate-macos-arm64.zip` for Apple Silicon Macs.
+Check CPU architecture:
+
+```powershell
+# Windows
+$env:PROCESSOR_ARCHITECTURE
+```
+
+```bash
+# macOS / Linux
+uname -m
+```
+
+Use `x64` packages for `AMD64` / `x86_64`, and `arm64` packages for `ARM64` / `arm64` / `aarch64`. On macOS, use `SSHMountMate-macos-x64.zip` for Intel Macs and `SSHMountMate-macos-arm64.zip` for Apple Silicon Macs.
 
 ## Quick Start
 
@@ -332,21 +356,31 @@ Linux：
 - FUSE 支持，通常是 `fuse3`
 - OpenSSH Client
 
-Linux 依赖可复制命令：
+SSH MountMate 会读取 `/etc/os-release` 识别 Linux 发行版，并在程序里优先显示匹配的 FUSE/OpenSSH 安装命令。主要分类是：
+
+- Debian 系：Debian、Ubuntu、Linux Mint、Pop!_OS
+- Fedora/RHEL 系：Fedora、RHEL、CentOS Stream、Rocky Linux、AlmaLinux
+- Arch 系：Arch Linux、Manjaro、EndeavourOS
+- openSUSE/SUSE 系：openSUSE Leap、Tumbleweed、SLES
+
+<details>
+<summary>完整 Linux 依赖命令</summary>
 
 ```bash
-# Debian/Ubuntu
+# Debian 系：Debian、Ubuntu、Linux Mint、Pop!_OS
 sudo apt update && sudo apt install -y fuse3 openssh-client
 
-# Fedora/RHEL
+# Fedora/RHEL 系：Fedora、RHEL、CentOS Stream、Rocky Linux、AlmaLinux
 sudo dnf install -y fuse3 openssh-clients
 
-# Arch
+# Arch 系：Arch Linux、Manjaro、EndeavourOS
 sudo pacman -S --needed fuse3 openssh
 
-# openSUSE
+# openSUSE/SUSE 系：openSUSE Leap、Tumbleweed、SLES
 sudo zypper install -y fuse3 openssh
 ```
+
+</details>
 
 ## 内置和托管 rclone
 
@@ -367,13 +401,27 @@ https://downloads.rclone.org/rclone-current-<platform>-<arch>.zip
 在 GitHub Release 中下载对应平台的包：
 
 - `SSHMountMate-windows-x64.zip`
+- `SSHMountMate-windows-arm64.zip`
 - `SSHMountMate-macos-x64.zip`
 - `SSHMountMate-macos-arm64.zip`
 - `SSHMountMate-linux-x64.zip`
+- `SSHMountMate-linux-arm64.zip`
 
 这些发布包由 GitHub Actions 从同一份 Python 代码构建。
 
-Intel Mac 请下载 `SSHMountMate-macos-x64.zip`，Apple Silicon Mac 请下载 `SSHMountMate-macos-arm64.zip`。
+判断 CPU 架构：
+
+```powershell
+# Windows
+$env:PROCESSOR_ARCHITECTURE
+```
+
+```bash
+# macOS / Linux
+uname -m
+```
+
+`AMD64` / `x86_64` 选择 `x64` 包，`ARM64` / `arm64` / `aarch64` 选择 `arm64` 包。Intel Mac 请下载 `SSHMountMate-macos-x64.zip`，Apple Silicon Mac 请下载 `SSHMountMate-macos-arm64.zip`。
 
 ## 快速开始
 

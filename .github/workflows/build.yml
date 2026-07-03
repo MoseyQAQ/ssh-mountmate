@@ -17,12 +17,16 @@ jobs:
         include:
           - os: windows-latest
             artifact: SSHMountMate-windows-x64
-          - os: macos-13
+          - os: windows-11-arm
+            artifact: SSHMountMate-windows-arm64
+          - os: macos-15-intel
             artifact: SSHMountMate-macos-x64
           - os: macos-14
             artifact: SSHMountMate-macos-arm64
           - os: ubuntu-latest
             artifact: SSHMountMate-linux-x64
+          - os: ubuntu-24.04-arm
+            artifact: SSHMountMate-linux-arm64
     runs-on: ${{ matrix.os }}
 
     steps:
